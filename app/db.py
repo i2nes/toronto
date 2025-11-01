@@ -562,6 +562,40 @@ def delete_session(session_id: str) -> bool:
         conn.close()
 
 
+def update_session_title(session_id: str, title: str) -> bool:
+    """Update the title of a session.
+
+    Args:
+        session_id: The session ID to update
+        title: The new title for the session
+
+    Returns:
+        True if session was updated, False if not found
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            UPDATE sessions
+            SET title = ?
+            WHERE id = ?
+        """, (title, session_id))
+        conn.commit()
+        updated = cursor.rowcount > 0
+
+        if updated:
+            logger.info("session_title_updated", session_id=session_id, title=title)
+        return updated
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("session_title_update_failed", error=str(e), session_id=session_id)
+        raise
+    finally:
+        conn.close()
+
+
 def add_message(
     session_id: str,
     role: str,

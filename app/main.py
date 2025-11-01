@@ -494,6 +494,49 @@ async def delete_session_endpoint(session_id: str):
         return jsonify({"error": "Failed to delete session"}), 500
 
 
+@app.route("/api/sessions/<session_id>", methods=["PATCH"])
+async def rename_session_endpoint(session_id: str):
+    """Rename a session.
+
+    Expects JSON body:
+    {
+        "title": "new title"
+    }
+
+    Returns:
+        200 OK with updated session data if successful
+        400 Bad Request if title is missing or invalid
+        404 Not Found if session doesn't exist
+    """
+    try:
+        data = await request.get_json()
+
+        if not data or "title" not in data:
+            return jsonify({"error": "Missing 'title' in request body"}), 400
+
+        new_title = data["title"].strip()
+
+        if not new_title:
+            return jsonify({"error": "Title cannot be empty"}), 400
+
+        # Limit title length
+        if len(new_title) > 100:
+            return jsonify({"error": "Title too long (max 100 characters)"}), 400
+
+        # Rename the session
+        updated = conversation_manager.rename_session(session_id, new_title)
+
+        if updated:
+            session = conversation_manager.get_session(session_id)
+            return jsonify(session), 200
+        else:
+            return jsonify({"error": "Session not found"}), 404
+
+    except Exception as e:
+        logger.error("session_rename_error", error=str(e), session_id=session_id)
+        return jsonify({"error": "Failed to rename session"}), 500
+
+
 @app.route("/api/sessions/<session_id>/messages", methods=["GET"])
 async def get_session_messages(session_id: str):
     """Get all messages for a session.

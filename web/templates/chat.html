@@ -92,18 +92,64 @@
         <!-- Sessions List -->
         <div class="flex-1 overflow-y-auto p-2">
             <template x-for="session in sessions" :key="session.id">
-                <button
-                    @click="loadSession(session.id)"
-                    :class="{
-                        'btn-active': currentSessionId === session.id
-                    }"
-                    class="btn btn-ghost btn-sm justify-start w-full text-left mb-1 h-auto py-3 normal-case"
-                >
-                    <div class="flex-1 min-w-0">
-                        <div class="truncate text-sm font-medium" x-text="session.title"></div>
-                        <div class="text-xs opacity-60" x-text="formatDate(session.created_at)"></div>
+                <div class="relative group mb-1">
+                    <button
+                        @click="loadSession(session.id)"
+                        :class="{
+                            'btn-active': currentSessionId === session.id
+                        }"
+                        class="btn btn-ghost btn-sm justify-start w-full text-left h-auto py-3 normal-case pr-10"
+                    >
+                        <div class="flex-1 min-w-0">
+                            <div class="truncate text-sm font-medium" x-text="session.title"></div>
+                            <div class="text-xs opacity-60" x-text="formatDate(session.created_at)"></div>
+                        </div>
+                    </button>
+
+                    <!-- Context Menu Button -->
+                    <div class="absolute right-2 top-1/2 -translate-y-1/2 z-10" @click.stop @mouseenter="hoveredSession = session.id" @mouseleave="hoveredSession = null">
+                        <div class="relative">
+                            <button
+                                class="btn btn-ghost btn-xs btn-circle transition-opacity"
+                                :class="(currentSessionId === session.id || sessionMenuOpen === session.id || hoveredSession === session.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+                                @click="sessionMenuOpen = sessionMenuOpen === session.id ? null : session.id"
+                                title="More options"
+                            >
+                                <i data-lucide="more-vertical" class="w-4 h-4"></i>
+                            </button>
+                            <!-- Dropdown menu positioned to the left of the button -->
+                            <div
+                                x-show="sessionMenuOpen === session.id"
+                                x-cloak
+                                x-transition:enter="transition ease-out duration-100"
+                                x-transition:enter-start="opacity-0 scale-95"
+                                x-transition:enter-end="opacity-100 scale-100"
+                                x-transition:leave="transition ease-in duration-75"
+                                x-transition:leave-start="opacity-100 scale-100"
+                                x-transition:leave-end="opacity-0 scale-95"
+                                @click.outside="sessionMenuOpen = null"
+                                @mouseenter="hoveredSession = session.id"
+                                class="absolute right-full mr-2 top-0 z-50"
+                                style="min-width: 12rem;"
+                            >
+                                <ul class="menu p-2 shadow-xl bg-base-200 rounded-box border border-base-300">
+                                    <li>
+                                        <a @click="openRenameDialog(session)" class="flex items-center gap-2 text-sm">
+                                            <i data-lucide="edit-2" class="w-4 h-4"></i>
+                                            <span>Rename</span>
+                                        </a>
+                                    </li>
+                                    <li>
+                                        <a @click="openDeleteDialog(session)" class="text-error flex items-center gap-2 text-sm">
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                            <span>Delete</span>
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
                     </div>
-                </button>
+                </div>
             </template>
 
             <div x-show="sessions.length === 0" class="text-center text-base-content/60 text-sm py-8">
@@ -334,6 +380,74 @@
         </div>
     </div>
     </div> <!-- Close Main Content Area -->
+
+    <!-- Rename Session Modal -->
+    <div x-show="renameDialogOpen" class="modal modal-open" x-cloak>
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Rename Chat</h3>
+            <form @submit.prevent="renameSession">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">New title</span>
+                    </label>
+                    <input
+                        type="text"
+                        x-model="renameTitle"
+                        x-ref="renameInput"
+                        class="input input-bordered w-full"
+                        placeholder="Enter new title"
+                        maxlength="100"
+                        required
+                    />
+                </div>
+                <div class="modal-action">
+                    <button
+                        type="button"
+                        class="btn btn-ghost"
+                        @click="closeRenameDialog"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        class="btn btn-primary"
+                        :disabled="!renameTitle.trim()"
+                    >
+                        Rename
+                    </button>
+                </div>
+            </form>
+        </div>
+        <div class="modal-backdrop" @click="closeRenameDialog"></div>
+    </div>
+
+    <!-- Delete Session Modal -->
+    <div x-show="deleteDialogOpen" class="modal modal-open" x-cloak>
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Delete Chat</h3>
+            <p class="py-4">
+                Are you sure you want to delete "<span x-text="sessionToDelete?.title"></span>"?
+                This action cannot be undone.
+            </p>
+            <div class="modal-action">
+                <button
+                    type="button"
+                    class="btn btn-ghost"
+                    @click="closeDeleteDialog"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-error"
+                    @click="deleteSession"
+                >
+                    Delete
+                </button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="closeDeleteDialog"></div>
+    </div>
 </div>
 {% endblock %}
 
@@ -358,11 +472,27 @@ function chatApp() {
         availableModels: [],
         currentModel: '{{ chat_model }}',
         modelDropdownOpen: false,
+        sessionMenuOpen: null,
+        hoveredSession: null,
+        renameDialogOpen: false,
+        deleteDialogOpen: false,
+        sessionToRename: null,
+        sessionToDelete: null,
+        renameTitle: '',
 
         init() {
             this.fetchSessions();
             this.fetchModels();
             this.$refs.input.focus();
+
+            // Watch sessionMenuOpen to reinitialize icons when dropdown opens
+            this.$watch('sessionMenuOpen', () => {
+                this.$nextTick(() => {
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                });
+            });
         },
 
         renderMarkdown(content) {
@@ -442,6 +572,13 @@ function chatApp() {
                 const response = await fetch('/api/sessions');
                 const data = await response.json();
                 this.sessions = data.sessions || [];
+
+                // Reinitialize Lucide icons for dynamically loaded sessions
+                this.$nextTick(() => {
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                });
             } catch (err) {
                 console.error('Failed to fetch sessions:', err);
             }
@@ -557,6 +694,93 @@ function chatApp() {
                     lucide.createIcons();
                 }
             });
+        },
+
+        openRenameDialog(session) {
+            this.sessionToRename = session;
+            this.renameTitle = session.title;
+            this.renameDialogOpen = true;
+            this.sessionMenuOpen = null;
+            this.$nextTick(() => {
+                this.$refs.renameInput?.focus();
+                if (typeof lucide !== 'undefined') {
+                    lucide.createIcons();
+                }
+            });
+        },
+
+        closeRenameDialog() {
+            this.renameDialogOpen = false;
+            this.sessionToRename = null;
+            this.renameTitle = '';
+        },
+
+        async renameSession() {
+            if (!this.sessionToRename || !this.renameTitle.trim()) return;
+
+            try {
+                const response = await fetch(`/api/sessions/${this.sessionToRename.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: this.renameTitle.trim() }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to rename session');
+                }
+
+                // Update the session in the list
+                const sessionIndex = this.sessions.findIndex(s => s.id === this.sessionToRename.id);
+                if (sessionIndex !== -1) {
+                    this.sessions[sessionIndex].title = data.title;
+                }
+
+                this.closeRenameDialog();
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to rename session:', err);
+            }
+        },
+
+        openDeleteDialog(session) {
+            this.sessionToDelete = session;
+            this.deleteDialogOpen = true;
+            this.sessionMenuOpen = null;
+        },
+
+        closeDeleteDialog() {
+            this.deleteDialogOpen = false;
+            this.sessionToDelete = null;
+        },
+
+        async deleteSession() {
+            if (!this.sessionToDelete) return;
+
+            try {
+                const response = await fetch(`/api/sessions/${this.sessionToDelete.id}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete session');
+                }
+
+                // Remove the session from the list
+                this.sessions = this.sessions.filter(s => s.id !== this.sessionToDelete.id);
+
+                // If we deleted the current session, start a new chat
+                if (this.currentSessionId === this.sessionToDelete.id) {
+                    this.startNewChat();
+                }
+
+                this.closeDeleteDialog();
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to delete session:', err);
+            }
         }
     }
 }

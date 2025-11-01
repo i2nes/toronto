@@ -164,6 +164,21 @@ class ConversationManager:
             logger.info("conversation_session_deleted", session_id=session_id)
         return deleted
 
+    def rename_session(self, session_id: str, title: str) -> bool:
+        """Rename a session with a custom title.
+
+        Args:
+            session_id: The session ID to rename
+            title: The new title for the session
+
+        Returns:
+            True if renamed successfully, False if session not found
+        """
+        updated = db.update_session_title(session_id, title)
+        if updated:
+            logger.info("conversation_session_renamed", session_id=session_id, title=title)
+        return updated
+
     def update_session_title(self, session_id: str, first_message: str) -> None:
         """Update session title based on first message.
 
