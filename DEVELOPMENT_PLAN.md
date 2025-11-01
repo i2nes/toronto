@@ -17,20 +17,21 @@
 ✅ Phase 1: Basic Chat UI (COMPLETED - 2025-11-01)
 ✅ Phase 2: RAG Pipeline - Indexing (COMPLETED - 2025-11-01)
 ✅ Phase 3: RAG-Enhanced Chat (COMPLETED - 2025-11-01)
-📋 Phase 4: Sessions & Memory (PENDING)
+✅ Phase 4: Sessions & Memory (COMPLETED - 2025-11-01)
 📋 Phase 5: Tool Calling (PENDING)
 📋 Phase 6: Polish & Production (PENDING)
 📋 Phase 7: Advanced Features (OPTIONAL)
 ```
 
-**🎉 Working Demo:** http://localhost:5001 (RAG-enhanced chat is live!)
+**🎉 Working Demo:** http://localhost:5001 (Multi-turn conversations with session management!)
 
 **⏱️ Time Spent:**
 - Phase 0: ~2 hours (setup, validation)
 - Phase 1: ~2 hours (implementation + Alpine.js refactor)
 - Phase 2: ~2 hours (RAG pipeline implementation)
 - Phase 3: ~2 hours (retrieval integration + UI updates)
-- **Total:** ~8 hours from zero to RAG-enhanced chat
+- Phase 4: ~2 hours (session management + conversation memory)
+- **Total:** ~10 hours from zero to multi-turn RAG chat with sessions
 
 **📦 What's Built:**
 - ✅ Full-stack Quart app with async Ollama client
@@ -44,6 +45,11 @@
 - ✅ Semantic retrieval with FAISS vector search
 - ✅ Context-enhanced chat responses
 - ✅ Source citations in UI (collapsible sources with relevance scores)
+- ✅ Session management (SQLite sessions + messages tables)
+- ✅ Conversation memory with 6-message context window
+- ✅ Sidebar UI with session list and "New Chat" button
+- ✅ Auto-generated session titles from first message
+- ✅ Multi-turn conversations with full history persistence
 
 ---
 
@@ -534,49 +540,53 @@ If the information is not in the notes, say so. Always cite your sources like [n
 
 ---
 
-## Phase 4: Sessions & Memory (Day 6-7)
+## Phase 4: Sessions & Memory ✅ COMPLETED
 
 **Goal:** Multi-turn conversations with memory. Save/load sessions.
 
+**Status:** ✅ Completed 2025-11-01
+**Demo:** http://localhost:5001 - Session sidebar with multi-turn conversations!
+
 ### Tasks
 
-1. **Session schema** (`app/db.py`)
-   ```sql
-   CREATE TABLE sessions (
-       id TEXT PRIMARY KEY,
-       title TEXT,
-       created_at TEXT NOT NULL
-   );
+- [x] **Session schema** (`app/db.py`)
+  - Created `sessions` table (id, title, created_at)
+  - Created `messages` table with foreign key to sessions
+  - Added `sources_json` field for RAG source persistence
+  - Added performance indexes on session_id and created_at
 
-   CREATE TABLE messages (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       session_id TEXT NOT NULL,
-       role TEXT NOT NULL,
-       content TEXT NOT NULL,
-       created_at TEXT NOT NULL,
-       FOREIGN KEY (session_id) REFERENCES sessions(id)
-   );
-   ```
+- [x] **Conversation manager** (`app/memory/manager.py`)
+  - Implemented `create_session()`
+  - Implemented `add_message(session_id, role, content, sources)`
+  - Implemented `get_recent_messages(session_id, limit=6)`
+  - Implemented `format_conversation_history()` for LLM context
+  - Added `update_session_title()` for auto-generated titles
+  - Context window management (6 messages)
 
-2. **Conversation manager** (`app/memory/manager.py`)
-   - `create_session()`
-   - `add_message(session_id, role, content)`
-   - `get_recent_messages(session_id, limit=6)`
-   - Token-based windowing
+- [x] **Update chat to use sessions** (`app/main.py`)
+  - POST /api/sessions (create new session)
+  - GET /api/sessions (list all sessions)
+  - DELETE /api/sessions/:id (delete session)
+  - GET /api/sessions/:id/messages (retrieve messages)
+  - Updated POST /api/chat to accept session_id and maintain history
+  - Auto-creates session if not provided
 
-3. **Update chat to use sessions**
-   - POST /api/sessions (create)
-   - GET /api/sessions (list)
-   - DELETE /api/sessions/:id
-   - GET /api/messages?session_id=...
-   - Update /api/chat to maintain conversation history
-
-4. **Update UI for sessions**
-   - Sidebar with session list
-   - "New chat" button
-   - Load previous conversations
+- [x] **Update UI for sessions** (`web/templates/chat.html`)
+  - Added sidebar (264px) with scrollable session list
+  - "New Chat" button in sidebar header
+  - Click-to-load previous conversations
+  - Active session highlighting
+  - Relative timestamps ("2m ago", "5h ago")
+  - Auto-refresh session list on new chat creation
 
 **Deliverable:** ✅ Multi-turn conversations saved and retrievable.
+
+**What Works:**
+- ✅ Sessions persist to SQLite database
+- ✅ LLM remembers conversation context (tested: "What was my first message?" works)
+- ✅ Session switching loads complete history
+- ✅ Auto-generated titles from first user message
+- ✅ 6-message context window for optimal performance
 
 ---
 

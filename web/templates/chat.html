@@ -3,7 +3,45 @@
 {% block title %}Chat - AI Assistant{% endblock %}
 
 {% block content %}
-<div class="flex flex-col h-screen bg-base-100" x-data="chatApp()">
+<div class="flex h-screen bg-base-100" x-data="chatApp()">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-base-200 border-r border-base-300 flex flex-col">
+        <!-- Sidebar Header -->
+        <div class="p-4 border-b border-base-300">
+            <button
+                @click="startNewChat"
+                class="btn btn-primary btn-block"
+            >
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                New Chat
+            </button>
+        </div>
+
+        <!-- Sessions List -->
+        <div class="flex-1 overflow-y-auto p-2">
+            <template x-for="session in sessions" :key="session.id">
+                <button
+                    @click="loadSession(session.id)"
+                    :class="{
+                        'btn-active': currentSessionId === session.id
+                    }"
+                    class="btn btn-ghost btn-sm justify-start w-full text-left mb-1 h-auto py-3 normal-case"
+                >
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate text-sm font-medium" x-text="session.title"></div>
+                        <div class="text-xs opacity-60" x-text="formatDate(session.created_at)"></div>
+                    </div>
+                </button>
+            </template>
+
+            <div x-show="sessions.length === 0" class="text-center text-base-content/60 text-sm py-8">
+                No previous chats
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex flex-col flex-1">
     <!-- Header -->
     <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300">
         <div class="navbar max-w-4xl mx-auto px-4">
@@ -161,6 +199,7 @@
             </form>
         </div>
     </div>
+    </div> <!-- Close Main Content Area -->
 </div>
 {% endblock %}
 
@@ -169,12 +208,67 @@
 function chatApp() {
     return {
         messages: [],
+        sessions: [],
+        currentSessionId: null,
         userInput: '',
         isProcessing: false,
         error: null,
 
         init() {
+            this.fetchSessions();
             this.$refs.input.focus();
+        },
+
+        async fetchSessions() {
+            try {
+                const response = await fetch('/api/sessions');
+                const data = await response.json();
+                this.sessions = data.sessions || [];
+            } catch (err) {
+                console.error('Failed to fetch sessions:', err);
+            }
+        },
+
+        startNewChat() {
+            this.currentSessionId = null;
+            this.messages = [];
+            this.$refs.input.focus();
+        },
+
+        async loadSession(sessionId) {
+            try {
+                this.currentSessionId = sessionId;
+                const response = await fetch(`/api/sessions/${sessionId}/messages`);
+                const data = await response.json();
+
+                // Transform messages for display
+                this.messages = (data.messages || []).map(msg => ({
+                    id: msg.id,
+                    role: msg.role,
+                    content: msg.content,
+                    sources: msg.sources || []
+                }));
+
+                this.scrollToBottom();
+            } catch (err) {
+                this.error = 'Failed to load session';
+                console.error(err);
+            }
+        },
+
+        formatDate(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            return date.toLocaleDateString();
         },
 
         async sendMessage() {
@@ -190,16 +284,28 @@ function chatApp() {
             this.scrollToBottom();
 
             try {
+                const requestBody = { message };
+                if (this.currentSessionId) {
+                    requestBody.session_id = this.currentSessionId;
+                }
+
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message }),
+                    body: JSON.stringify(requestBody),
                 });
 
                 const data = await response.json();
 
                 if (!response.ok) {
                     throw new Error(data.error || `HTTP ${response.status}`);
+                }
+
+                // Update session ID if this was a new chat
+                if (!this.currentSessionId && data.session_id) {
+                    this.currentSessionId = data.session_id;
+                    // Refresh sessions list to show the new session
+                    await this.fetchSessions();
                 }
 
                 // Add assistant response

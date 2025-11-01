@@ -86,6 +86,40 @@ def init_database() -> None:
             ON chunks(note_path)
         """)
 
+        # Table for chat sessions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # Table for chat messages
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                sources_json TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Index for session_id lookups in messages
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_session_id
+            ON messages(session_id)
+        """)
+
+        # Index for created_at for ordering messages
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_created_at
+            ON messages(created_at)
+        """)
+
         conn.commit()
         logger.info("database_initialized", db_path=str(DB_PATH))
 
@@ -339,6 +373,254 @@ def get_chunk_count() -> int:
 
     except Exception as e:
         logger.error("chunk_count_failed", error=str(e))
+        raise
+    finally:
+        conn.close()
+
+
+# Session Management Functions
+
+def create_session(session_id: str, title: Optional[str] = None) -> str:
+    """Create a new chat session.
+
+    Args:
+        session_id: Unique identifier for the session
+        title: Optional title for the session
+
+    Returns:
+        The session_id that was created
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO sessions (id, title, created_at)
+            VALUES (?, ?, ?)
+        """, (
+            session_id,
+            title or "New Chat",
+            datetime.utcnow().isoformat(),
+        ))
+
+        conn.commit()
+        logger.info("session_created", session_id=session_id, title=title)
+        return session_id
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("session_create_failed", error=str(e), session_id=session_id)
+        raise
+    finally:
+        conn.close()
+
+
+def get_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Get a session by ID.
+
+    Args:
+        session_id: The session ID to retrieve
+
+    Returns:
+        Dictionary with session fields, or None if not found
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT id, title, created_at
+            FROM sessions
+            WHERE id = ?
+        """, (session_id,))
+
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    except Exception as e:
+        logger.error("session_get_failed", error=str(e), session_id=session_id)
+        raise
+    finally:
+        conn.close()
+
+
+def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
+    """List all sessions, most recent first.
+
+    Args:
+        limit: Maximum number of sessions to return
+
+    Returns:
+        List of session dictionaries
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT id, title, created_at
+            FROM sessions
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    except Exception as e:
+        logger.error("sessions_list_failed", error=str(e))
+        raise
+    finally:
+        conn.close()
+
+
+def delete_session(session_id: str) -> bool:
+    """Delete a session and all its messages.
+
+    Args:
+        session_id: The session ID to delete
+
+    Returns:
+        True if session was deleted, False if not found
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        conn.commit()
+        deleted = cursor.rowcount > 0
+
+        if deleted:
+            logger.info("session_deleted", session_id=session_id)
+        return deleted
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("session_delete_failed", error=str(e), session_id=session_id)
+        raise
+    finally:
+        conn.close()
+
+
+def add_message(
+    session_id: str,
+    role: str,
+    content: str,
+    sources: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Add a message to a session.
+
+    Args:
+        session_id: The session to add the message to
+        role: Message role ('user' or 'assistant')
+        content: The message content
+        sources: Optional list of source chunks used for RAG
+
+    Returns:
+        ID of the inserted message
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO messages (session_id, role, content, sources_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            session_id,
+            role,
+            content,
+            json.dumps(sources) if sources else None,
+            datetime.utcnow().isoformat(),
+        ))
+
+        conn.commit()
+        row_id = cursor.lastrowid
+        logger.info("message_added", session_id=session_id, role=role, message_id=row_id)
+        return row_id
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("message_add_failed", error=str(e), session_id=session_id)
+        raise
+    finally:
+        conn.close()
+
+
+def get_messages(session_id: str) -> List[Dict[str, Any]]:
+    """Get all messages for a session.
+
+    Args:
+        session_id: The session ID to get messages for
+
+    Returns:
+        List of message dictionaries, ordered by creation time
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT id, session_id, role, content, sources_json, created_at
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY created_at ASC
+        """, (session_id,))
+
+        rows = cursor.fetchall()
+        messages = []
+        for row in rows:
+            msg = dict(row)
+            # Parse JSON sources if present
+            if msg["sources_json"]:
+                msg["sources"] = json.loads(msg["sources_json"])
+            messages.append(msg)
+
+        return messages
+
+    except Exception as e:
+        logger.error("messages_get_failed", error=str(e), session_id=session_id)
+        raise
+    finally:
+        conn.close()
+
+
+def get_recent_messages(session_id: str, limit: int = 6) -> List[Dict[str, Any]]:
+    """Get the most recent messages for a session (for context window).
+
+    Args:
+        session_id: The session ID to get messages for
+        limit: Maximum number of messages to return
+
+    Returns:
+        List of message dictionaries, ordered by creation time
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT id, session_id, role, content, sources_json, created_at
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (session_id, limit))
+
+        rows = cursor.fetchall()
+        messages = []
+        for row in reversed(rows):  # Reverse to get chronological order
+            msg = dict(row)
+            # Parse JSON sources if present
+            if msg["sources_json"]:
+                msg["sources"] = json.loads(msg["sources_json"])
+            messages.append(msg)
+
+        return messages
+
+    except Exception as e:
+        logger.error("recent_messages_get_failed", error=str(e), session_id=session_id)
         raise
     finally:
         conn.close()
