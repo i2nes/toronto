@@ -1,0 +1,15 @@
+{
+  "name": "toronto-ai",
+  "version": "1.0.0",
+  "description": "Toronto AI Assistant - Local RAG-powered chat",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --minify",
+    "watch:css": "tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "latest",
+    "@tailwindcss/cli": "latest",
+    "daisyui": "latest"
+  }
+}

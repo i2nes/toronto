@@ -3,128 +3,163 @@
 {% block title %}Chat - Toronto AI Assistant{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto" x-data="chatApp()">
-    <!-- Chat Card -->
-    <div class="card bg-base-100 shadow-xl">
-        <div class="card-body">
-            <h2 class="card-title">
-                💬 Chat
-                <div class="badge badge-primary badge-sm">Phase 1</div>
-            </h2>
+<div class="flex flex-col h-screen bg-base-100" x-data="chatApp()">
+    <!-- Header -->
+    <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300">
+        <div class="navbar max-w-4xl mx-auto px-4">
+            <div class="flex-1">
+                <h1 class="text-lg font-bold">Toronto AI</h1>
+            </div>
+            <div class="flex-none gap-2">
+                <!-- Status Badges -->
+                <div class="badge badge-primary badge-sm">Phase 3</div>
+                <div class="badge badge-ghost badge-sm">{{ chat_model }}</div>
 
-            <!-- Messages Container -->
+                <!-- Theme Toggle -->
+                <button
+                    @click="$store.theme.toggle()"
+                    class="btn btn-ghost btn-sm btn-circle"
+                    title="Toggle theme"
+                >
+                    <i x-show="$store.theme.current === 'light'" data-lucide="moon" class="w-4 h-4"></i>
+                    <i x-show="$store.theme.current === 'dark'" data-lucide="sun" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Messages Container -->
+    <div
+        x-ref="messages"
+        class="flex-1 overflow-y-auto"
+    >
+        <!-- Welcome Message -->
+        <div x-show="messages.length === 0" class="max-w-3xl mx-auto px-4 py-20 text-center">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-6">
+                <i data-lucide="sparkles" class="w-8 h-8 text-primary"></i>
+            </div>
+            <h2 class="text-3xl font-bold mb-3">How can I help you today?</h2>
+            <p class="text-lg text-base-content/60">Ask me anything about your notes or the project</p>
+        </div>
+
+        <!-- Messages -->
+        <template x-for="msg in messages" :key="msg.id">
             <div
-                x-ref="messages"
-                class="space-y-4 h-96 overflow-y-auto p-4 bg-base-200 rounded-lg mb-4"
+                :class="{
+                    'bg-base-200': msg.role === 'user',
+                    'bg-error/10': msg.role === 'error',
+                    'bg-base-100': msg.role === 'assistant'
+                }"
+                class="border-b border-base-300"
             >
-                <!-- Welcome Message -->
-                <div x-show="messages.length === 0" class="text-center text-base-content/60 py-8">
-                    <p>👋 Hello! I'm your AI assistant.</p>
-                    <p class="text-sm mt-2">Ask me anything to get started.</p>
-                </div>
+                <div class="max-w-3xl mx-auto px-4 py-6">
+                    <div class="flex gap-4">
+                        <!-- Avatar -->
+                        <div class="flex-shrink-0">
+                            <div class="avatar placeholder">
+                                <div class="w-8 h-8 rounded-full"
+                                    :class="{
+                                        'bg-primary text-primary-content': msg.role === 'user' || msg.role === 'assistant',
+                                        'bg-error text-error-content': msg.role === 'error'
+                                    }"
+                                >
+                                    <i :data-lucide="msg.role === 'user' ? 'user' : (msg.role === 'error' ? 'alert-triangle' : 'bot')" class="w-5 h-5"></i>
+                                </div>
+                            </div>
+                        </div>
 
-                <!-- Messages -->
-                <template x-for="msg in messages" :key="msg.id">
-                    <div
-                        class="chat"
-                        :class="{
-                            'chat-end': msg.role === 'user',
-                            'chat-start': msg.role !== 'user'
-                        }"
-                    >
-                        <div class="chat-bubble-container">
-                            <div
-                                class="chat-bubble"
-                                :class="{
-                                    'chat-bubble-primary': msg.role === 'user',
-                                    'chat-bubble-secondary': msg.role === 'assistant',
-                                    'chat-bubble-error': msg.role === 'error'
-                                }"
-                                x-text="msg.content"
-                            ></div>
+                        <!-- Content -->
+                        <div class="flex-1 min-w-0 pt-1">
+                            <div class="prose prose-sm max-w-none">
+                                <div class="whitespace-pre-wrap" x-text="msg.content"></div>
+                            </div>
 
-                            <!-- Sources (only for assistant messages with RAG) -->
+                            <!-- Sources -->
                             <template x-if="msg.role === 'assistant' && msg.sources && msg.sources.length > 0">
-                                <div class="mt-2 text-xs opacity-70">
-                                    <details class="collapse collapse-arrow bg-base-200 rounded-box">
-                                        <summary class="collapse-title min-h-0 py-2 px-3 cursor-pointer">
-                                            <span class="flex items-center gap-1">
-                                                <span>📚</span>
-                                                <span x-text="`${msg.sources.length} source${msg.sources.length > 1 ? 's' : ''}`"></span>
-                                            </span>
-                                        </summary>
-                                        <div class="collapse-content">
-                                            <template x-for="(source, idx) in msg.sources" :key="idx">
-                                                <div class="mb-2 p-2 bg-base-300 rounded">
-                                                    <div class="font-semibold" x-text="source.source"></div>
-                                                    <div class="text-xs mt-1 opacity-80" x-text="source.content_preview"></div>
-                                                    <div class="text-xs mt-1">
-                                                        <span class="badge badge-xs"
-                                                              :class="source.relevance > 0.7 ? 'badge-success' : 'badge-info'"
-                                                              x-text="`${Math.round(source.relevance * 100)}% relevant`">
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </template>
+                                <div class="mt-3">
+                                    <div class="collapse collapse-arrow bg-base-200 rounded-box">
+                                        <input type="checkbox" />
+                                        <div class="collapse-title text-sm font-medium flex items-center gap-2 py-2 min-h-0">
+                                            <i data-lucide="book-open" class="w-4 h-4"></i>
+                                            <span x-text="`${msg.sources.length} source${msg.sources.length > 1 ? 's' : ''} used`"></span>
                                         </div>
-                                    </details>
+                                        <div class="collapse-content">
+                                            <div class="space-y-2">
+                                                <template x-for="(source, idx) in msg.sources" :key="idx">
+                                                    <div class="card bg-base-100 shadow-sm">
+                                                        <div class="card-body p-3">
+                                                            <div class="flex items-start justify-between gap-2">
+                                                                <div class="flex-1 min-w-0">
+                                                                    <h4 class="font-semibold text-sm truncate" x-text="source.source"></h4>
+                                                                    <p class="text-xs text-base-content/60 line-clamp-2 mt-1" x-text="source.content_preview"></p>
+                                                                </div>
+                                                                <div
+                                                                    class="badge badge-sm"
+                                                                    :class="source.relevance > 0.7 ? 'badge-success' : 'badge-info'"
+                                                                    x-text="`${Math.round(source.relevance * 100)}%`"
+                                                                ></div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </template>
                         </div>
                     </div>
-                </template>
-            </div>
-
-            <!-- Input Area -->
-            <form @submit.prevent="sendMessage">
-                <div class="form-control">
-                    <div class="flex gap-2">
-                        <input
-                            x-ref="input"
-                            x-model="userInput"
-                            type="text"
-                            placeholder="Type your message here..."
-                            class="input input-bordered flex-1"
-                            maxlength="2000"
-                            autocomplete="off"
-                            :disabled="isProcessing"
-                        />
-                        <button
-                            type="submit"
-                            class="btn btn-primary"
-                            :disabled="isProcessing || !userInput.trim()"
-                        >
-                            <span x-show="!isProcessing">Send</span>
-                            <span x-show="isProcessing" class="loading loading-spinner loading-sm"></span>
-                        </button>
-                    </div>
-                    <label class="label">
-                        <span class="label-text-alt text-base-content/60">
-                            Press Enter to send • Max 2000 characters
-                        </span>
-                        <span
-                            class="label-text-alt"
-                            :class="userInput.length > 1900 ? 'text-warning' : 'text-base-content/60'"
-                            x-text="`${userInput.length}/2000`"
-                        ></span>
-                    </label>
                 </div>
-            </form>
-
-            <!-- Error Alert -->
-            <div x-show="error" class="alert alert-error">
-                <i data-lucide="alert-circle" class="stroke-current shrink-0 h-6 w-6"></i>
-                <span x-text="error"></span>
             </div>
-        </div>
+        </template>
     </div>
 
-    <!-- Info Card -->
-    <div class="alert alert-success mt-4">
-        <i data-lucide="check-circle" class="stroke-current shrink-0 w-6 h-6"></i>
-        <div class="text-sm">
-            <p><strong>Phase 3:</strong> RAG-enhanced chat with knowledge base search! 🎉</p>
-            <p class="text-xs mt-1">Model: {{ chat_model }} • Indexed notes: 11 chunks from 3 files</p>
+    <!-- Input Area -->
+    <div class="sticky bottom-0 bg-base-100 border-t border-base-300 shadow-lg">
+        <div class="max-w-3xl mx-auto px-4 py-4">
+            <!-- Error Alert -->
+            <div x-show="error" x-transition class="alert alert-error mb-4">
+                <i data-lucide="alert-circle" class="w-5 h-5"></i>
+                <span x-text="error"></span>
+                <button @click="error = null" class="btn btn-sm btn-ghost btn-circle">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <form @submit.prevent="sendMessage">
+                <div class="join w-full">
+                    <input
+                        x-ref="input"
+                        x-model="userInput"
+                        type="text"
+                        placeholder="Message Toronto AI..."
+                        class="input input-bordered join-item flex-1 text-base"
+                        maxlength="2000"
+                        autocomplete="off"
+                        :disabled="isProcessing"
+                    />
+                    <button
+                        type="submit"
+                        class="btn btn-primary join-item"
+                        :disabled="isProcessing || !userInput.trim()"
+                    >
+                        <i x-show="!isProcessing" data-lucide="send" class="w-5 h-5"></i>
+                        <span x-show="isProcessing" class="loading loading-spinner loading-sm"></span>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between mt-2 text-xs text-base-content/60">
+                    <div class="flex gap-2">
+                        <div class="badge badge-ghost badge-xs">
+                            <i data-lucide="database" class="w-3 h-3 mr-1"></i>
+                            RAG enabled
+                        </div>
+                        <div class="badge badge-ghost badge-xs">
+                            <span x-text="`${userInput.length}/2000`"></span>
+                        </div>
+                    </div>
+                    <span class="text-xs">Press Enter to send</span>
+                </div>
+            </form>
         </div>
     </div>
 </div>

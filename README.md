@@ -16,6 +16,7 @@ A local-first AI assistant with RAG (Retrieval-Augmented Generation) over your m
 ### Prerequisites
 
 - Python 3.13+
+- Node.js 18+ and npm (for Tailwind CSS + DaisyUI)
 - [Ollama](https://ollama.ai) installed and running
 - Models pulled: `ollama pull gemma3:12b` and `ollama pull mxbai-embed-large:latest`
 
@@ -30,8 +31,11 @@ cd toronto
 python -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
+
+# Install Node dependencies (Tailwind + DaisyUI)
+npm install
 
 # Validate setup
 python scripts/validate_setup.py
@@ -40,8 +44,8 @@ python scripts/validate_setup.py
 ### Initial Setup
 
 ```bash
-# Build Tailwind CSS (first time)
-./bin/tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --minify
+# Build Tailwind CSS with DaisyUI (first time)
+npm run build:css
 
 # Index your notes (optional - sample notes included)
 python scripts/reindex.py
@@ -52,7 +56,7 @@ python scripts/reindex.py
 ### Option 1: Quick Start (One Command)
 
 ```bash
-source .venv/bin/activate && ./bin/tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --minify && hypercorn app.main:app --bind 0.0.0.0:5001 --reload
+source .venv/bin/activate && npm run build:css && hypercorn app.main:app --bind 0.0.0.0:5001 --reload
 ```
 
 Then visit: **http://localhost:5001**
@@ -63,7 +67,7 @@ Run these in **two separate terminals**:
 
 **Terminal 1** - Tailwind Watch (auto-rebuilds CSS on template changes):
 ```bash
-./bin/tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --watch
+npm run watch:css
 ```
 
 **Terminal 2** - Development Server (auto-reloads on Python changes):
@@ -79,8 +83,8 @@ Then visit: **http://localhost:5001**
 
 | Task | Command |
 |------|---------|
-| **Build CSS (once)** | `./bin/tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --minify` |
-| **Watch CSS** | `./bin/tailwindcss -i web/static/src/styles.css -o web/static/css/app.css --watch` |
+| **Build CSS (once)** | `npm run build:css` |
+| **Watch CSS** | `npm run watch:css` |
 | **Start Server** | `source .venv/bin/activate && hypercorn app.main:app --bind 0.0.0.0:5001 --reload` |
 
 ### Content Management
