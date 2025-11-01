@@ -26,6 +26,7 @@ class MarkdownFileHandler(FileSystemEventHandler):
         ingest_pipeline: IngestPipeline,
         vector_store: FAISSVectorStore,
         debounce_seconds: float = 2.0,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         """Initialize the file handler.
 
@@ -33,11 +34,13 @@ class MarkdownFileHandler(FileSystemEventHandler):
             ingest_pipeline: Pipeline for ingesting files
             vector_store: Vector store for managing embeddings
             debounce_seconds: Time to wait before processing changes (prevents rapid re-indexing)
+            loop: Event loop to use for scheduling async tasks
         """
         super().__init__()
         self.ingest_pipeline = ingest_pipeline
         self.vector_store = vector_store
         self.debounce_seconds = debounce_seconds
+        self.loop = loop or asyncio.get_event_loop()
 
         # Track pending changes with debouncing
         self._pending_changes: Set[Path] = set()
@@ -83,7 +86,13 @@ class MarkdownFileHandler(FileSystemEventHandler):
 
         # Start processing task if not already running
         if self._processing_task is None or self._processing_task.done():
-            self._processing_task = asyncio.create_task(self._debounced_process())
+            # Schedule coroutine on the main event loop from this thread
+            future = asyncio.run_coroutine_threadsafe(
+                self._debounced_process(), self.loop
+            )
+            # Convert future to task for tracking (though we can't access the task directly)
+            # We'll rely on the future completing instead
+            self._processing_task = None  # Reset since we're using futures now
 
     def _schedule_deletion(self, file_path: Path):
         """Schedule a file for deletion from index.
@@ -92,7 +101,10 @@ class MarkdownFileHandler(FileSystemEventHandler):
             file_path: Path to the deleted file
         """
         # Process deletions immediately (no debouncing needed)
-        asyncio.create_task(self._handle_deletion(file_path))
+        # Schedule coroutine on the main event loop from this thread
+        asyncio.run_coroutine_threadsafe(
+            self._handle_deletion(file_path), self.loop
+        )
 
     async def _debounced_process(self):
         """Process pending changes after debounce period."""
@@ -228,23 +240,12 @@ class NotesWatcher:
         self.debounce_seconds = debounce_seconds
 
         # Initialize components
-        self.ingest_pipeline = IngestPipeline(notes_dir=self.notes_dir)
         self.vector_store = FAISSVectorStore()
+        self.ingest_pipeline = None  # Will be created in start() with initialized vector store
 
-        # Create event handler
-        self.event_handler = MarkdownFileHandler(
-            ingest_pipeline=self.ingest_pipeline,
-            vector_store=self.vector_store,
-            debounce_seconds=debounce_seconds,
-        )
-
-        # Create observer
-        self.observer = Observer()
-        self.observer.schedule(
-            self.event_handler,
-            str(self.notes_dir),
-            recursive=True,
-        )
+        # Event handler and observer will be created in start()
+        self.event_handler = None
+        self.observer = None
 
         self._started = False
 
@@ -263,7 +264,30 @@ class NotesWatcher:
         # Ensure vector store is loaded
         await self.vector_store.init_or_load()
 
-        # Start observer
+        # Create ingest pipeline with the initialized vector store
+        self.ingest_pipeline = IngestPipeline(
+            notes_dir=self.notes_dir,
+            vector_store=self.vector_store,
+        )
+
+        # Get the current event loop
+        loop = asyncio.get_running_loop()
+
+        # Create event handler with the event loop
+        self.event_handler = MarkdownFileHandler(
+            ingest_pipeline=self.ingest_pipeline,
+            vector_store=self.vector_store,
+            debounce_seconds=self.debounce_seconds,
+            loop=loop,
+        )
+
+        # Create and start observer
+        self.observer = Observer()
+        self.observer.schedule(
+            self.event_handler,
+            str(self.notes_dir),
+            recursive=True,
+        )
         self.observer.start()
         self._started = True
 
@@ -277,9 +301,13 @@ class NotesWatcher:
         if not self._started:
             return
 
-        self.observer.stop()
-        self.observer.join(timeout=5.0)
-        self.event_handler.shutdown()
+        if self.observer:
+            self.observer.stop()
+            self.observer.join(timeout=5.0)
+
+        if self.event_handler:
+            self.event_handler.shutdown()
+
         self._started = False
 
         logger.info("notes_watcher_stopped")
@@ -290,7 +318,7 @@ class NotesWatcher:
         Returns:
             True if watcher is active
         """
-        return self._started and self.observer.is_alive()
+        return self._started and self.observer is not None and self.observer.is_alive()
 
 
 # Global watcher instance

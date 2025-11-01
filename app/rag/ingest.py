@@ -31,6 +31,7 @@ class IngestPipeline:
         chunk_size: int = None,
         chunk_overlap: int = None,
         batch_size: int = 10,
+        vector_store: Optional[FAISSVectorStore] = None,
     ):
         """Initialize the ingest pipeline.
 
@@ -40,6 +41,7 @@ class IngestPipeline:
             chunk_size: Chunk size in characters (default from config)
             chunk_overlap: Chunk overlap in characters (default from config)
             batch_size: Number of embeddings to generate in parallel
+            vector_store: Optional pre-initialized vector store (creates new if not provided)
         """
         self.notes_dir = notes_dir or config.NOTES_DIR
         self.embedding_model = embedding_model or config.EMBEDDING_MODEL
@@ -47,7 +49,7 @@ class IngestPipeline:
 
         self.parser = MarkdownParser()
         self.chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self.vector_store = FAISSVectorStore(embedding_model=embedding_model)
+        self.vector_store = vector_store or FAISSVectorStore(embedding_model=embedding_model)
 
         self.stats = {
             "files_processed": 0,
