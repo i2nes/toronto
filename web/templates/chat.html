@@ -113,9 +113,7 @@
 
             <!-- Error Alert -->
             <div x-show="error" class="alert alert-error">
-                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
+                <i data-lucide="alert-circle" class="stroke-current shrink-0 h-6 w-6"></i>
                 <span x-text="error"></span>
             </div>
         </div>
@@ -123,9 +121,7 @@
 
     <!-- Info Card -->
     <div class="alert alert-success mt-4">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-        </svg>
+        <i data-lucide="check-circle" class="stroke-current shrink-0 w-6 h-6"></i>
         <div class="text-sm">
             <p><strong>Phase 3:</strong> RAG-enhanced chat with knowledge base search! 🎉</p>
             <p class="text-xs mt-1">Model: {{ chat_model }} • Indexed notes: 11 chunks from 3 files</p>
@@ -197,6 +193,10 @@ function chatApp() {
         scrollToBottom() {
             this.$nextTick(() => {
                 this.$refs.messages.scrollTop = this.$refs.messages.scrollHeight;
+                // Reinitialize Lucide icons for any dynamically added content
+                if (typeof lucide !== 'undefined') {
+                    lucide.createIcons();
+                }
             });
         }
     }
