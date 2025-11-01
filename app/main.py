@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-from app import config
+from app import config, db
 from app.llm_client import ollama_client
 from app.rag.retriever import get_retriever
 from app.memory import ConversationManager
@@ -859,6 +859,283 @@ async def select_model():
             "error": "Failed to update model",
             "message": str(e)
         }), 500
+
+
+@app.route("/notes")
+async def notes_page():
+    """Render the notes management interface."""
+    return await render_template(
+        "notes.html",
+        static_version=config.STATIC_VERSION,
+    )
+
+
+@app.route("/api/notes", methods=["GET"])
+async def list_notes():
+    """List all markdown notes in the notes directory.
+
+    Returns JSON:
+    {
+        "notes": [
+            {
+                "path": "relative/path.md",
+                "name": "filename.md",
+                "size": 1234,
+                "modified_at": "2024-01-01T00:00:00"
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        notes = []
+        notes_dir = config.NOTES_DIR
+
+        if not notes_dir.exists():
+            return jsonify({"notes": []}), 200
+
+        # Find all markdown files
+        for md_file in sorted(notes_dir.rglob("*.md")):
+            try:
+                relative_path = md_file.relative_to(notes_dir)
+                stat = md_file.stat()
+
+                notes.append({
+                    "path": str(relative_path),
+                    "name": md_file.name,
+                    "size": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                })
+            except Exception as e:
+                logger.warning("failed_to_stat_file", file=str(md_file), error=str(e))
+                continue
+
+        return jsonify({"notes": notes}), 200
+
+    except Exception as e:
+        logger.error("list_notes_failed", error=str(e), error_type=type(e).__name__)
+        return jsonify({"error": "Failed to list notes"}), 500
+
+
+@app.route("/api/notes/<path:note_path>", methods=["GET"])
+async def get_note(note_path: str):
+    """Get a specific note's content.
+
+    Returns JSON:
+    {
+        "path": "path.md",
+        "content": "markdown content",
+        "size": 1234,
+        "modified_at": "2024-01-01T00:00:00"
+    }
+    """
+    try:
+        # Validate and construct path
+        notes_dir = config.NOTES_DIR
+        file_path = (notes_dir / note_path).resolve()
+
+        # Security: ensure path is within notes directory
+        if not str(file_path).startswith(str(notes_dir)):
+            return jsonify({"error": "Invalid path"}), 400
+
+        if not file_path.exists():
+            return jsonify({"error": "Note not found"}), 404
+
+        if not file_path.suffix == ".md":
+            return jsonify({"error": "Not a markdown file"}), 400
+
+        # Read content
+        content = file_path.read_text(encoding="utf-8")
+        stat = file_path.stat()
+
+        return jsonify({
+            "path": note_path,
+            "content": content,
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        }), 200
+
+    except Exception as e:
+        logger.error("get_note_failed", path=note_path, error=str(e))
+        return jsonify({"error": "Failed to read note"}), 500
+
+
+@app.route("/api/notes/<path:note_path>/metadata", methods=["GET"])
+async def get_note_metadata(note_path: str):
+    """Get metadata about a note's indexing status.
+
+    Returns JSON:
+    {
+        "path": "path.md",
+        "indexed": true,
+        "chunk_count": 5,
+        "last_indexed_at": "2024-01-01T00:00:00"
+    }
+    """
+    try:
+        # Check if note has chunks in database
+        chunks = db.get_chunk_ids_for_file(note_path)
+        has_chunks = len(chunks) > 0
+
+        # Get latest index metadata
+        index_meta = db.get_latest_index_metadata()
+
+        return jsonify({
+            "path": note_path,
+            "indexed": has_chunks,
+            "chunk_count": len(chunks),
+            "last_indexed_at": index_meta.get("indexed_at") if index_meta else None,
+        }), 200
+
+    except Exception as e:
+        logger.error("get_note_metadata_failed", path=note_path, error=str(e))
+        return jsonify({"error": "Failed to get metadata"}), 500
+
+
+@app.route("/api/notes", methods=["POST"])
+async def create_note():
+    """Create a new note.
+
+    Expects JSON body:
+    {
+        "path": "folder/filename.md",
+        "content": "markdown content"
+    }
+
+    Returns JSON:
+    {
+        "path": "folder/filename.md",
+        "created": true
+    }
+    """
+    try:
+        data = await request.get_json()
+
+        if not data or "path" not in data or "content" not in data:
+            return jsonify({"error": "Missing 'path' or 'content'"}), 400
+
+        note_path = data["path"]
+        content = data["content"]
+
+        # Validate path
+        if not note_path.endswith(".md"):
+            return jsonify({"error": "Note must have .md extension"}), 400
+
+        # Construct full path
+        notes_dir = config.NOTES_DIR
+        file_path = (notes_dir / note_path).resolve()
+
+        # Security: ensure path is within notes directory
+        if not str(file_path).startswith(str(notes_dir)):
+            return jsonify({"error": "Invalid path"}), 400
+
+        # Check if file already exists
+        if file_path.exists():
+            return jsonify({"error": "Note already exists"}), 409
+
+        # Create parent directories
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write content
+        file_path.write_text(content, encoding="utf-8")
+
+        logger.info("note_created", path=note_path)
+
+        return jsonify({
+            "path": note_path,
+            "created": True,
+        }), 201
+
+    except Exception as e:
+        logger.error("create_note_failed", error=str(e))
+        return jsonify({"error": "Failed to create note"}), 500
+
+
+@app.route("/api/notes/<path:note_path>", methods=["PUT"])
+async def update_note(note_path: str):
+    """Update an existing note.
+
+    Expects JSON body:
+    {
+        "content": "updated markdown content"
+    }
+
+    Returns JSON:
+    {
+        "path": "path.md",
+        "updated": true
+    }
+    """
+    try:
+        data = await request.get_json()
+
+        if not data or "content" not in data:
+            return jsonify({"error": "Missing 'content'"}), 400
+
+        content = data["content"]
+
+        # Validate and construct path
+        notes_dir = config.NOTES_DIR
+        file_path = (notes_dir / note_path).resolve()
+
+        # Security: ensure path is within notes directory
+        if not str(file_path).startswith(str(notes_dir)):
+            return jsonify({"error": "Invalid path"}), 400
+
+        if not file_path.exists():
+            return jsonify({"error": "Note not found"}), 404
+
+        if not file_path.suffix == ".md":
+            return jsonify({"error": "Not a markdown file"}), 400
+
+        # Write updated content
+        file_path.write_text(content, encoding="utf-8")
+
+        logger.info("note_updated", path=note_path)
+
+        return jsonify({
+            "path": note_path,
+            "updated": True,
+        }), 200
+
+    except Exception as e:
+        logger.error("update_note_failed", path=note_path, error=str(e))
+        return jsonify({"error": "Failed to update note"}), 500
+
+
+@app.route("/api/notes/<path:note_path>", methods=["DELETE"])
+async def delete_note(note_path: str):
+    """Delete a note.
+
+    Returns:
+        204 No Content if successful
+        404 Not Found if note doesn't exist
+    """
+    try:
+        # Validate and construct path
+        notes_dir = config.NOTES_DIR
+        file_path = (notes_dir / note_path).resolve()
+
+        # Security: ensure path is within notes directory
+        if not str(file_path).startswith(str(notes_dir)):
+            return jsonify({"error": "Invalid path"}), 400
+
+        if not file_path.exists():
+            return jsonify({"error": "Note not found"}), 404
+
+        if not file_path.suffix == ".md":
+            return jsonify({"error": "Not a markdown file"}), 400
+
+        # Delete file
+        file_path.unlink()
+
+        logger.info("note_deleted", path=note_path)
+
+        return "", 204
+
+    except Exception as e:
+        logger.error("delete_note_failed", path=note_path, error=str(e))
+        return jsonify({"error": "Failed to delete note"}), 500
 
 
 @app.errorhandler(404)

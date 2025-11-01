@@ -1,0 +1,433 @@
+{% extends "layout.html" %}
+
+{% block title %}Notes - AI Assistant{% endblock %}
+
+{% block content %}
+<div class="flex h-screen bg-base-100" x-data="notesApp()">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-base-200 border-r border-base-300 flex flex-col">
+        <!-- Sidebar Header -->
+        <div class="p-4 border-b border-base-300">
+            <button
+                @click="showCreateDialog"
+                class="btn btn-primary btn-block btn-sm"
+            >
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                New Note
+            </button>
+        </div>
+
+        <!-- Notes List -->
+        <div class="flex-1 overflow-y-auto p-2">
+            <template x-for="note in notes" :key="note.path">
+                <button
+                    @click="loadNote(note.path)"
+                    :class="{
+                        'btn-active': currentNotePath === note.path
+                    }"
+                    class="btn btn-ghost btn-sm justify-start w-full text-left mb-1 h-auto py-3 normal-case"
+                >
+                    <div class="flex-1 min-w-0">
+                        <div class="truncate text-sm font-medium" x-text="note.name"></div>
+                        <div class="text-xs opacity-60" x-text="formatSize(note.size)"></div>
+                    </div>
+                </button>
+            </template>
+
+            <div x-show="notes.length === 0" class="text-center text-base-content/60 text-sm py-8">
+                No notes yet
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex flex-col flex-1">
+        <!-- Header -->
+        <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300 min-h-16">
+            <div class="navbar max-w-6xl mx-auto px-4 min-h-16">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="file-text" class="w-6 h-6"></i>
+                        <h1 class="text-lg font-bold">Notes</h1>
+                    </div>
+                </div>
+                <div class="flex-none flex items-center gap-2">
+                    <a href="/" class="btn btn-ghost btn-sm">
+                        <i data-lucide="message-circle" class="w-4 h-4"></i>
+                        Chat
+                    </a>
+                    <!-- Theme Toggle -->
+                    <button
+                        @click="$store.theme.toggle()"
+                        class="btn btn-ghost btn-sm btn-circle"
+                        title="Toggle theme"
+                    >
+                        <i x-show="$store.theme.current === 'light'" data-lucide="moon" class="w-4 h-4"></i>
+                        <i x-show="$store.theme.current === 'dark'" data-lucide="sun" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Content Area -->
+        <div class="flex-1 overflow-y-auto">
+            <!-- Empty State -->
+            <div x-show="!currentNotePath && !isCreating" class="max-w-3xl mx-auto px-4 py-20 text-center">
+                <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-6">
+                    <i data-lucide="file-text" class="w-8 h-8 text-primary"></i>
+                </div>
+                <h2 class="text-3xl font-bold mb-3">Manage Your Notes</h2>
+                <p class="text-lg text-base-content/60">Select a note to view or create a new one</p>
+            </div>
+
+            <!-- View/Edit Mode -->
+            <div x-show="currentNotePath && !isEditing" class="max-w-4xl mx-auto px-4 py-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold" x-text="currentNote?.name"></h2>
+                    <div class="flex gap-2">
+                        <button @click="startEditing" class="btn btn-primary btn-sm">
+                            <i data-lucide="edit" class="w-4 h-4"></i>
+                            Edit
+                        </button>
+                        <button @click="openDeleteDialog" class="btn btn-error btn-sm">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            Delete
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metadata Panel -->
+                <div class="alert mb-4" :class="metadata.indexed ? 'alert-success' : 'alert-warning'">
+                    <i data-lucide="database" class="w-5 h-5"></i>
+                    <div class="flex-1">
+                        <span class="font-semibold" x-text="metadata.indexed ? 'Indexed' : 'Not Indexed'"></span>
+                        <span class="text-sm opacity-80" x-show="metadata.indexed">
+                            - <span x-text="metadata.chunk_count"></span> chunks
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Rendered Content -->
+                <div class="prose prose-sm max-w-none dark:prose-invert">
+                    <div x-html="renderMarkdown(currentNote?.content || '')"></div>
+                </div>
+            </div>
+
+            <!-- Edit Mode -->
+            <div x-show="isEditing" class="max-w-4xl mx-auto px-4 py-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold">Edit Note</h2>
+                    <div class="flex gap-2">
+                        <button @click="cancelEditing" class="btn btn-ghost btn-sm">Cancel</button>
+                        <button @click="saveNote" class="btn btn-primary btn-sm">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            Save
+                        </button>
+                    </div>
+                </div>
+
+                <textarea
+                    x-model="editContent"
+                    class="textarea textarea-bordered w-full font-mono text-sm"
+                    rows="20"
+                    placeholder="Write your markdown here..."
+                ></textarea>
+            </div>
+
+            <!-- Create Mode -->
+            <div x-show="isCreating" class="max-w-4xl mx-auto px-4 py-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold">Create New Note</h2>
+                    <div class="flex gap-2">
+                        <button @click="cancelCreating" class="btn btn-ghost btn-sm">Cancel</button>
+                        <button @click="createNote" class="btn btn-primary btn-sm">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                            Create
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-control mb-4">
+                    <label class="label">
+                        <span class="label-text">File Name</span>
+                    </label>
+                    <input
+                        type="text"
+                        x-model="newNoteName"
+                        class="input input-bordered"
+                        placeholder="my-note.md"
+                    />
+                    <label class="label">
+                        <span class="label-text-alt">Must end with .md</span>
+                    </label>
+                </div>
+
+                <textarea
+                    x-model="newNoteContent"
+                    class="textarea textarea-bordered w-full font-mono text-sm"
+                    rows="20"
+                    placeholder="# My Note\n\nWrite your markdown here..."
+                ></textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-show="deleteDialogOpen" class="modal modal-open" x-cloak>
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Delete Note</h3>
+            <p class="py-4">
+                Are you sure you want to delete "<span x-text="currentNote?.name"></span>"?
+                This action cannot be undone.
+            </p>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" @click="closeDeleteDialog">
+                    Cancel
+                </button>
+                <button type="button" class="btn btn-error" @click="deleteNote">
+                    Delete
+                </button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="closeDeleteDialog"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Configure marked.js globally
+marked.setOptions({
+    breaks: true,
+    gfm: true,
+    headerIds: true,
+    mangle: false,
+});
+
+function notesApp() {
+    return {
+        notes: [],
+        currentNotePath: null,
+        currentNote: null,
+        metadata: { indexed: false, chunk_count: 0 },
+        isEditing: false,
+        isCreating: false,
+        editContent: '',
+        newNoteName: '',
+        newNoteContent: '',
+        deleteDialogOpen: false,
+        error: null,
+
+        init() {
+            this.fetchNotes();
+        },
+
+        renderMarkdown(content) {
+            if (!content) return '';
+
+            try {
+                const rawHtml = marked.parse(content);
+                const cleanHtml = DOMPurify.sanitize(rawHtml, {
+                    ALLOWED_TAGS: [
+                        'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+                        'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                        'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+                        'span', 'div', 'img', 'del', 'input'
+                    ],
+                    ALLOWED_ATTR: [
+                        'href', 'target', 'rel', 'class', 'src', 'alt', 'title',
+                        'type', 'checked', 'disabled'
+                    ]
+                });
+
+                return cleanHtml;
+            } catch (err) {
+                console.error('Markdown rendering error:', err);
+                return DOMPurify.sanitize(content);
+            }
+        },
+
+        async fetchNotes() {
+            try {
+                const response = await fetch('/api/notes');
+                const data = await response.json();
+                this.notes = data.notes || [];
+
+                this.$nextTick(() => {
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to fetch notes:', err);
+                this.error = 'Failed to load notes';
+            }
+        },
+
+        async loadNote(path) {
+            try {
+                // Fetch note content
+                const response = await fetch(`/api/notes/${path}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to load note');
+                }
+
+                this.currentNotePath = path;
+                this.currentNote = data;
+                this.isEditing = false;
+                this.isCreating = false;
+
+                // Fetch metadata
+                await this.fetchMetadata(path);
+
+                this.$nextTick(() => {
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                });
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to load note:', err);
+            }
+        },
+
+        async fetchMetadata(path) {
+            try {
+                const response = await fetch(`/api/notes/${path}/metadata`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    this.metadata = data;
+                }
+            } catch (err) {
+                console.error('Failed to fetch metadata:', err);
+            }
+        },
+
+        startEditing() {
+            this.editContent = this.currentNote?.content || '';
+            this.isEditing = true;
+        },
+
+        cancelEditing() {
+            this.isEditing = false;
+            this.editContent = '';
+        },
+
+        async saveNote() {
+            if (!this.currentNotePath) return;
+
+            try {
+                const response = await fetch(`/api/notes/${this.currentNotePath}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: this.editContent }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to save note');
+                }
+
+                // Reload the note
+                await this.loadNote(this.currentNotePath);
+                await this.fetchNotes();
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to save note:', err);
+            }
+        },
+
+        showCreateDialog() {
+            this.isCreating = true;
+            this.currentNotePath = null;
+            this.newNoteName = '';
+            this.newNoteContent = '# New Note\n\nStart writing here...';
+        },
+
+        cancelCreating() {
+            this.isCreating = false;
+            this.newNoteName = '';
+            this.newNoteContent = '';
+        },
+
+        async createNote() {
+            if (!this.newNoteName.trim()) {
+                this.error = 'Please enter a file name';
+                return;
+            }
+
+            if (!this.newNoteName.endsWith('.md')) {
+                this.error = 'File name must end with .md';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: this.newNoteName,
+                        content: this.newNoteContent,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to create note');
+                }
+
+                // Refresh notes list and load the new note
+                await this.fetchNotes();
+                await this.loadNote(this.newNoteName);
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to create note:', err);
+            }
+        },
+
+        openDeleteDialog() {
+            this.deleteDialogOpen = true;
+        },
+
+        closeDeleteDialog() {
+            this.deleteDialogOpen = false;
+        },
+
+        async deleteNote() {
+            if (!this.currentNotePath) return;
+
+            try {
+                const response = await fetch(`/api/notes/${this.currentNotePath}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok && response.status !== 204) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete note');
+                }
+
+                // Refresh notes list and clear current note
+                this.currentNotePath = null;
+                this.currentNote = null;
+                this.deleteDialogOpen = false;
+                await this.fetchNotes();
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to delete note:', err);
+            }
+        },
+
+        formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+    }
+}
+</script>
+{% endblock %}
