@@ -40,12 +40,14 @@ class RetrievalResult:
         """Convert L2 distance to a 0-1 relevance score.
 
         Lower distance = higher relevance.
-        We use a simple exponential decay for interpretability.
+        Uses inverse function for numerical stability with large distances.
         """
-        # For L2 distance, typical values range from 0 (identical) to ~2.0 (very different)
-        # We'll map this to 0-1 scale using exponential decay
-        import math
-        return math.exp(-self.distance / 2.0)
+        # For non-normalized embeddings, distances can be large (100+)
+        # Use 1 / (1 + distance/100) to map to 0-1 range
+        # - distance=0 -> relevance=1.0 (perfect match)
+        # - distance=100 -> relevance=0.5 (moderate match)
+        # - distance=400 -> relevance=0.2 (weak match)
+        return 1.0 / (1.0 + self.distance / 100.0)
 
 
 class Retriever:
