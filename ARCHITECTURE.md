@@ -11,7 +11,7 @@ Here’s a compact, production-ready blueprint you can build locally with Python
                 │ HTTP (WebSocket optional for streaming)
 ┌───────────────┴───────────────────────┐
 │               Quart API               │
-│  /chat  /retrieve  /tools  /notes     │
+│  /api/chat  /api/sessions  /api/notes │
 │  - Session auth (optional)            │
 │  - SSE or WS for token streaming      │
 └───────────────┬───────────────────────┘
@@ -78,12 +78,19 @@ Ingest sidecar (watcher):
 
 1. **Watch**: `watchdog` monitors `notes/*.md` (create/update/delete).
 2. **Parse**: read Markdown; extract optional frontmatter (title, tags, dates), normalize paths & timestamps.
-3. **Chunk**: Markdown-aware splitter with hierarchy retention (H1/H2/H3) and overlaps (e.g., 600 tokens, 80 overlap).
-4. **Embed**: use **Ollama embeddings** (`embeddings(model="nomic-embed-text")`) → 768/1024-d vectors.
+3. **Chunk**: Markdown-aware splitter with hierarchy retention (H1/H2/H3) and overlaps.
+   * Use **character-based** sizes (e.g., 2400 chars ≈ 600 tokens, 320 char overlap ≈ 80 tokens) to avoid tokenizer mismatches.
+   * Make `CHUNK_SIZE` and `CHUNK_OVERLAP` configurable in `config.py`.
+4. **Embed**: use **Ollama embeddings** (`embeddings(model="nomic-embed-text")`).
+   * **Dimension detection**: On first run, embed a test string and capture `len(vector)` to detect dimensions dynamically.
+   * **Never hardcode dimensions**—models vary (nomic-embed-text: 768d, mxbai-embed-large: 1024d, etc.).
+   * Store detected dimension in index metadata for validation on subsequent loads.
 5. **Upsert**:
 
    * Write chunk metadata to SQLite: `note_id`, `chunk_id`, `rel_path`, `headings_path`, `token_count`, `updated_at`.
+   * Write index metadata to SQLite: `embedding_model`, `embedding_dimension`, `created_at`, `last_updated`.
    * Upsert vectors + `chunk_id` into FAISS (or your chosen vector DB).
+   * On index load: validate current model's dimension matches stored `embedding_dimension`; fail fast if mismatch.
 6. **Delete handling**: on file deletion, remove its chunks and vectors.
 
 **Query (per user message)**
@@ -136,13 +143,17 @@ Because many local LLMs don’t have native function-calling, implement a **tool
 **Tool Registry (Python)**
 
 ```python
+from typing import Callable, Awaitable
+from dataclasses import dataclass
+import pydantic
+
 @dataclass
 class Tool:
     name: str
     description: str
     input_model: type[pydantic.BaseModel]
     output_model: type[pydantic.BaseModel]
-    handler: Callable[[BaseModel], BaseModel]
+    handler: Callable[[pydantic.BaseModel], Awaitable[pydantic.BaseModel]]
 
 TOOLS = {
   "weather.get": Tool(...),
@@ -151,7 +162,10 @@ TOOLS = {
 ```
 
 **Weather tool**: call Open-Meteo (free) and return a concise struct (current temp, condition, next 12h).
+
 **Web search tool**: DuckDuckGo lite client (HTML scraping or API) → titles + urls + snippets.
+* **Security**: Configure `SEARCH_MAX_RESULTS`, `SEARCH_TIMEOUT`, `SEARCH_ALLOWED_DOMAINS`, and `SEARCH_BLOCKED_DOMAINS` in `config.py` to prevent prompt injection via open web results.
+* **Validation**: Sanitize URLs and snippets before returning to LLM; reject results from blocked domains.
 
 This mirrors **MCP** concepts (declarative tools with schemas); if you later adopt a full MCP host/runtime, your registry maps cleanly.
 
@@ -169,14 +183,31 @@ This mirrors **MCP** concepts (declarative tools with schemas); if you later ado
 
 # 7) Minimal API surface (Quart)
 
+**Core API endpoints** (`/api/*`)
+
 ```
-POST /api/chat        -> {session_id, message}   # handles tool loop + RAG + memory
-GET  /api/sessions    -> list sessions
-POST /api/sessions    -> create session
-GET  /api/messages    -> {session_id} -> messages
-GET  /api/notes       -> browse indexed notes (path, titles, updated_at)
-POST /api/reindex     -> trigger ingest (or run watcher as a sidecar)
-GET  /stream/chat     -> SSE/WS stream of tokens (optional)
+POST   /api/chat           -> {session_id, message}   # handles tool loop + RAG + memory
+GET    /api/sessions       -> list sessions
+POST   /api/sessions       -> create session
+DELETE /api/sessions/:id   -> delete session and cascade messages/summaries/tool_runs
+GET    /api/messages       -> {session_id} -> messages
+GET    /api/notes          -> browse indexed notes (path, titles, updated_at)
+POST   /api/reindex        -> trigger ingest (or run watcher as a sidecar)
+GET    /api/stream/chat    -> SSE/WS stream of tokens (optional)
+```
+
+**Operational endpoints** (root level, following platform conventions)
+
+```
+GET /health/ready          -> readiness probe (checks Ollama, DB, vector store)
+GET /health/live           -> liveness probe (app running check)
+GET /metrics               -> Prometheus metrics (optional)
+```
+
+**Debug endpoints** (dev only, prefix with `/api/debug`)
+
+```
+GET /api/debug/last-retrieval  -> show chunks, scores, reranking for last query
 ```
 
 # 8) File/folder scaffold (no runtime npm)
@@ -205,8 +236,9 @@ ai-assistant/
 │  └─ config.py              # paths, model names, chunk sizes, top_k, etc.
 ├─ notes/                    # your .md files (watched)
 ├─ data/
-│  ├─ vectors.index          # FAISS files
-│  └─ assistant.sqlite       # SQLite DB
+│  ├─ vectors.index          # FAISS index file
+│  ├─ metadata.json          # embedding model, dimension, timestamps
+│  └─ assistant.sqlite       # SQLite DB (messages, sessions, chunks metadata)
 ├─ web/
 │  ├─ templates/             # Jinja2 templates (chat.html, layout.html)
 │  └─ static/
@@ -222,10 +254,62 @@ ai-assistant/
 
 # 9) Key implementation notes
 
+**Embedding dimension handling**
+
+* **Never hardcode dimensions**—detect at runtime and store in metadata.
+* Validate on every index load to catch model mismatches early.
+
+```python
+import ollama
+import json
+from pathlib import Path
+
+async def get_embedding_dimension(model: str) -> int:
+    """Detect embedding dimension by embedding a test string."""
+    response = await ollama.embeddings(model=model, prompt="test")
+    return len(response['embedding'])
+
+async def init_or_load_index(model: str, index_path: Path):
+    """Initialize new index or load existing with dimension validation."""
+    metadata_path = index_path / "metadata.json"
+
+    # Detect current model's dimension
+    current_dim = await get_embedding_dimension(model)
+
+    if metadata_path.exists():
+        # Load existing index
+        metadata = json.loads(metadata_path.read_text())
+        stored_dim = metadata['embedding_dimension']
+        stored_model = metadata['embedding_model']
+
+        if current_dim != stored_dim:
+            raise ValueError(
+                f"Dimension mismatch: index was built with {stored_model} "
+                f"(dim={stored_dim}), but current model {model} has dim={current_dim}. "
+                f"Please rebuild the index or switch back to {stored_model}."
+            )
+
+        logger.info(f"Loaded index: {stored_model}, dimension={stored_dim}")
+        return load_faiss_index(index_path), metadata
+    else:
+        # Create new index
+        metadata = {
+            'embedding_model': model,
+            'embedding_dimension': current_dim,
+            'created_at': datetime.utcnow().isoformat(),
+            'last_updated': datetime.utcnow().isoformat()
+        }
+        metadata_path.write_text(json.dumps(metadata, indent=2))
+
+        logger.info(f"Created new index: {model}, dimension={current_dim}")
+        return create_faiss_index(dimension=current_dim), metadata
+```
+
 **Chunking**
 
 * Prefer Markdown splitter that respects headings; capture a `heading_path` like `# Project → ## Setup → ### DB`.
-* Overlap to preserve cross-paragraph references (e.g., 80–100 tokens).
+* Use **character-based** chunk sizes (not tokens) to avoid tokenizer inconsistencies—configure in `config.CHUNK_SIZE` / `config.CHUNK_OVERLAP`.
+* Overlap to preserve cross-paragraph references (e.g., 320 chars ≈ 80 tokens).
 
 **Retrieval quality**
 
@@ -344,7 +428,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 **Data Privacy**
 
 * **Local storage only**: SQLite + FAISS files in `data/` directory.
-* **Session cleanup**: Provide `/api/sessions/<id>/delete` endpoint; cascade-delete messages, summaries, tool_runs.
+* **Session cleanup**: Provide `DELETE /api/sessions/:id` endpoint; cascade-delete messages, summaries, tool_runs.
 * **Note exclusion**: Allow `.rag-ignore` file to exclude sensitive notes from indexing.
 * **Encryption at rest** (optional): Use SQLCipher for SQLite encryption if handling sensitive notes.
 
@@ -391,10 +475,12 @@ async def call_ollama_chat(messages: list[dict]) -> str:
 
 **RAG Pipeline Errors**
 
+* **Dimension mismatch**: Validate embedding model dimension against stored metadata on startup; fail fast with clear error message suggesting reindex or model switch.
 * **Empty retrieval**: If no chunks found, return fallback response: *"I couldn't find relevant notes. Would you like me to search the web?"*
 * **Embedding failures**: Log error, skip chunk, continue indexing (don't fail entire ingest).
 * **Vector store corruption**: Keep daily backups of FAISS index; auto-restore or trigger full reindex.
 * **File watcher crashes**: Wrap watchdog in supervisor; restart on unhandled exceptions; log all events.
+* **Model version changes**: If embedding model version changes (e.g., `nomic-embed-text` updates), dimension may change—detect and prompt for reindex.
 
 **Tool Execution Failures**
 
@@ -457,10 +543,23 @@ async def weather_tool(args: WeatherRequest) -> WeatherResult:
 ```python
 import structlog
 
+# Configure structlog (do this once at app startup)
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+)
+
 logger = structlog.get_logger()
 
-# Usage
-await logger.ainfo(
+# Usage (standard sync API, works in async contexts)
+logger.info(
     "chat_message_processed",
     session_id=session.id,
     message_tokens=len(tokens),
@@ -529,7 +628,8 @@ async def health_ready():
     checks = {
         'ollama': await check_ollama(),
         'database': await check_database(),
-        'vector_store': await check_vector_store()
+        'vector_store': await check_vector_store(),
+        'embedding_dimension': await check_embedding_dimension()
     }
     if all(checks.values()):
         return jsonify(checks), 200
@@ -542,6 +642,22 @@ async def check_ollama() -> bool:
             resp = await client.get('http://localhost:11434/api/tags')
             return resp.status_code == 200
     except Exception:
+        return False
+
+async def check_embedding_dimension() -> bool:
+    """Validate embedding model dimension matches stored metadata."""
+    try:
+        current_dim = await get_embedding_dimension(config.EMBEDDING_MODEL)
+        metadata = load_index_metadata()
+        if metadata and metadata['embedding_dimension'] != current_dim:
+            logger.error(
+                f"Dimension mismatch: stored={metadata['embedding_dimension']}, "
+                f"current={current_dim}. Reindex required."
+            )
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"Embedding dimension check failed: {e}")
         return False
 ```
 
@@ -571,12 +687,77 @@ async def check_ollama() -> bool:
 4. **Tool usage**: Pie chart of tool calls by type.
 5. **Error log**: Table of recent errors with stack traces.
 
-# 14) Sensible defaults
+# 14) Sensible defaults & configuration
 
-* **Models** (Ollama):
+**Models** (Ollama)
 
-  * Chat: `gemma3:12b`
-  * Embeddings: `mxbai-embed-large` (fast, solid).
-* **RAG params**: chunk 600 tokens / overlap 80; top-k=8; MMR λ=0.5; max context ~1500 tokens.
-* **Stores**: SQLite for everything non-vector; FAISS for vectors (or Chroma embedded mode).
-* **UI**: server-rendered Jinja2, 1 small HTMX/Alpine sprinkle for streaming.
+Use fully-qualified Ollama tags and validate on startup:
+
+```python
+# config.py
+CHAT_MODEL = "mistral-nemo:12b-instruct-q4_K_M"       # or "mistral-nemo:12b-instruct-q4_K_M", "qwen2.5:7b-instruct", "llama3.1:8b-instruct-q4_0"
+EMBEDDING_MODEL = "mxbai-embed-large"
+
+# Validate models exist on startup
+async def validate_ollama_models():
+    """Check that configured models are pulled in Ollama."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("http://localhost:11434/api/tags")
+        resp.raise_for_status()
+        available = {m['name'] for m in resp.json()['models']}
+
+        required = {CHAT_MODEL, EMBEDDING_MODEL}
+        missing = required - available
+
+        if missing:
+            raise ValueError(
+                f"Missing Ollama models: {missing}. "
+                f"Run: ollama pull {' && ollama pull '.join(missing)}"
+            )
+```
+
+**RAG params**
+
+```python
+# config.py
+CHUNK_SIZE = 2400               # characters (≈600 tokens for most models)
+CHUNK_OVERLAP = 320             # characters (≈80 tokens)
+RETRIEVAL_TOP_K = 8             # vector search results
+MMR_LAMBDA = 0.5                # diversity vs relevance (0=diverse, 1=relevant)
+MAX_CONTEXT_TOKENS = 1500       # total tokens fed to LLM from retrieval
+```
+
+> **Why characters not tokens?** Embedding models use different tokenizers (SentencePiece, BPE, etc.). Using characters is consistent and avoids tokenizer mismatches. Approximate 4 chars ≈ 1 token for English text.
+
+**Tool security**
+
+```python
+# config.py - Search tool constraints
+SEARCH_MAX_RESULTS = 10         # cap results to prevent injection/overload
+SEARCH_TIMEOUT = 10.0           # seconds
+SEARCH_ALLOWED_DOMAINS = None   # None=all, or ["example.com", "wikipedia.org"]
+SEARCH_BLOCKED_DOMAINS = [      # prevent known malicious/spam sites
+    "spam.example.com",
+]
+```
+
+**Storage**
+
+* SQLite for everything non-vector; FAISS for vectors (or Chroma embedded mode).
+* WAL mode enabled: `PRAGMA journal_mode=WAL` for concurrent reads.
+
+**UI & assets**
+
+* Server-rendered Jinja2, 1 small HTMX/Alpine sprinkle for streaming.
+* **CSS cache busting**: Use version hash or query param:
+
+```python
+# config.py
+STATIC_VERSION = "1.0.0"  # increment on CSS changes, or use git commit hash
+
+# In template
+<link rel="stylesheet" href="/static/css/app.css?v={{ config.STATIC_VERSION }}">
+
+# Or with file hashing (build step):
+# app.abc123.css generated by build_css.sh; reference in layout.html
+```
