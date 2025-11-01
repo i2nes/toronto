@@ -111,6 +111,23 @@
                                 <div class="whitespace-pre-wrap" x-text="msg.content"></div>
                             </div>
 
+                            <!-- Tool Calls -->
+                            <template x-if="msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0">
+                                <div class="mt-3">
+                                    <div class="space-y-2">
+                                        <template x-for="(tool_call, idx) in msg.tool_calls" :key="idx">
+                                            <div class="alert alert-info py-2 px-3">
+                                                <i data-lucide="wrench" class="w-4 h-4"></i>
+                                                <div class="flex-1">
+                                                    <span class="font-semibold text-sm">Used tool: </span>
+                                                    <span class="text-sm" x-text="tool_call.tool"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
                             <!-- Sources -->
                             <template x-if="msg.role === 'assistant' && msg.sources && msg.sources.length > 0">
                                 <div class="mt-3">
@@ -313,7 +330,8 @@ function chatApp() {
                     id: Date.now() + 1,
                     role: 'assistant',
                     content: data.response,
-                    sources: data.sources || []
+                    sources: data.sources || [],
+                    tool_calls: data.tool_calls || []
                 });
                 this.scrollToBottom();
 

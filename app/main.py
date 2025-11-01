@@ -1,12 +1,15 @@
 """Main Quart application for Toronto AI Assistant."""
 from quart import Quart, render_template, request, jsonify
 import structlog
+import json
+import re
 from pathlib import Path
 
 from app import config
 from app.llm_client import ollama_client
 from app.rag.retriever import get_retriever
 from app.memory import ConversationManager
+from app.tools import get_registry
 
 # Configure structured logging
 structlog.configure(
@@ -30,6 +33,67 @@ app = Quart(
 
 # Initialize conversation manager
 conversation_manager = ConversationManager(context_window_size=6)
+
+# Initialize tool registry
+tool_registry = get_registry()
+
+
+def _parse_tool_call(text: str) -> dict | None:
+    """Parse a tool call from LLM response.
+
+    Looks for JSON in the format:
+    {
+      "tool": "tool_name",
+      "args": {...}
+    }
+
+    Handles markdown code blocks (```json ... ```)
+
+    Args:
+        text: LLM response text
+
+    Returns:
+        Dict with tool and args if found, None otherwise
+    """
+    # Strip markdown code blocks if present
+    code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if code_block_match:
+        # Extract just the content inside code block
+        text = code_block_match.group(1).strip()
+
+    # Find the first '{' to start JSON extraction
+    start_idx = text.find('{')
+    if start_idx == -1:
+        return None
+
+    # Extract JSON by matching braces from start
+    brace_count = 0
+    end_idx = start_idx
+    for i in range(start_idx, len(text)):
+        if text[i] == '{':
+            brace_count += 1
+        elif text[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                end_idx = i + 1
+                break
+
+    if brace_count != 0:
+        # Unmatched braces
+        return None
+
+    json_str = text[start_idx:end_idx]
+
+    try:
+        tool_call = json.loads(json_str)
+
+        if "tool" in tool_call and "args" in tool_call:
+            return tool_call
+
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning("failed_to_parse_tool_call", error=str(e), text_preview=json_str[:100])
+
+    return None
 
 
 @app.route("/")
@@ -141,35 +205,112 @@ async def chat():
                 )
                 # Continue without RAG
 
-        # Build system prompt
+        # Build system prompt with tool information
+        tools_description = tool_registry.get_tools_description()
+
+        base_instructions = """You are a helpful AI assistant. Be concise and friendly.
+
+AVAILABLE TOOLS:
+You have access to the following tools. If a tool would be helpful to answer the user's question, respond with a JSON object in this exact format:
+{
+  "tool": "tool_name",
+  "args": {
+    "arg1": "value1",
+    "arg2": "value2"
+  }
+}
+
+Only respond with JSON if you need to call a tool. Otherwise, respond with natural language.
+
+"""
+
         if context:
-            system_content = f"""You are a helpful AI assistant with access to a knowledge base.
-
-Use the following context from the knowledge base to answer the user's question. If the context doesn't contain relevant information, you can still provide a helpful response based on your general knowledge, but mention that you don't have specific information in the knowledge base about that topic.
-
-Context from knowledge base:
+            system_content = base_instructions + f"""
+KNOWLEDGE BASE CONTEXT:
 {context}
 
-Instructions:
+INSTRUCTIONS:
+- First check if the knowledge base context contains relevant information
+- If the question requires real-time data (weather, web search), use the appropriate tool
 - Answer based on the context when relevant
-- Be concise and friendly
 - If you reference information from the context, you can mention the source
-- If the context doesn't help, say so and provide your best answer"""
+- If the context doesn't help, provide your best answer or suggest using a tool
+
+TOOLS:
+{tools_description}
+"""
         else:
-            system_content = "You are a helpful AI assistant. Be concise and friendly."
+            system_content = base_instructions + f"""
+TOOLS:
+{tools_description}
+
+INSTRUCTIONS:
+- Answer questions directly when you have the knowledge
+- Use tools when you need real-time data (weather, current events, web searches)
+- Be helpful and concise
+"""
 
         # Build messages for LLM (system + history + current)
         # Note: history already includes the current user message we just added
         messages = [{"role": "system", "content": system_content}] + conversation_history
 
-        # Call Ollama
-        response = await ollama_client.chat(messages)
+        # Tool execution loop
+        tool_calls = []
+        max_tool_iterations = 3  # Prevent infinite loops
 
-        assistant_message = response.get("message", {}).get("content", "")
+        for iteration in range(max_tool_iterations):
+            # Call Ollama
+            response = await ollama_client.chat(messages)
+            assistant_message = response.get("message", {}).get("content", "")
 
-        if not assistant_message:
-            logger.error("empty_ollama_response", response=response)
-            return jsonify({"error": "Empty response from LLM"}), 500
+            if not assistant_message:
+                logger.error("empty_ollama_response", response=response)
+                return jsonify({"error": "Empty response from LLM"}), 500
+
+            # Check if response contains a tool call
+            tool_call = _parse_tool_call(assistant_message)
+
+            if not tool_call:
+                # No tool call, we have the final answer
+                break
+
+            # Execute the tool
+            tool_name = tool_call.get("tool")
+            tool_args = tool_call.get("args", {})
+
+            logger.info("tool_call_detected", tool=tool_name, args=tool_args)
+
+            tool_result = await tool_registry.execute_tool(tool_name, tool_args)
+            tool_calls.append({
+                "tool": tool_name,
+                "args": tool_args,
+                "result": tool_result.data if tool_result.success else None,
+                "error": tool_result.error,
+            })
+
+            if not tool_result.success:
+                # Tool failed, return error to LLM
+                messages.append({
+                    "role": "assistant",
+                    "content": assistant_message
+                })
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool execution failed: {tool_result.error}. Please respond without using tools."
+                })
+                continue
+
+            # Add tool result to conversation for LLM to formulate final answer
+            messages.append({
+                "role": "assistant",
+                "content": assistant_message
+            })
+            messages.append({
+                "role": "user",
+                "content": f"Tool '{tool_name}' returned: {json.dumps(tool_result.data)}. Please provide a natural language answer to the user based on this data."
+            })
+
+        # If we exhausted iterations, assistant_message is the last response
 
         # Save assistant message to session
         conversation_manager.add_message(session_id, "assistant", assistant_message, sources)
@@ -195,6 +336,9 @@ Instructions:
 
         if sources:
             response_data["sources"] = sources
+
+        if tool_calls:
+            response_data["tool_calls"] = tool_calls
 
         return jsonify(response_data)
 
