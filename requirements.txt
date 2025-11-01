@@ -1,0 +1,38 @@
+# Core web framework
+quart>=0.19
+hypercorn>=0.16
+
+# LLM & embeddings
+ollama>=0.1
+httpx>=0.26
+
+# RAG dependencies
+faiss-cpu>=1.7
+langchain-text-splitters>=0.0.1
+
+# Tools & validation
+pydantic>=2.5
+python-dotenv>=1.0
+tenacity>=8.2
+
+# Database
+aiosqlite>=0.19
+
+# File watching
+watchdog>=4.0
+
+# Logging & monitoring
+structlog>=24.1
+
+# Metrics (optional)
+prometheus-client>=0.19
+
+# Testing
+pytest>=7.4
+pytest-asyncio>=0.23
+pytest-playwright>=0.4
+
+# Development tools
+black>=23.12
+isort>=5.13
+ruff>=0.1
