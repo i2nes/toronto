@@ -748,6 +748,76 @@ async def metrics():
         }), 500
 
 
+@app.route("/api/models")
+async def get_models():
+    """Get list of available Ollama models.
+
+    Returns:
+        JSON with available models and current selection
+    """
+    try:
+        import httpx
+
+        # Fetch available models from Ollama
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{config.OLLAMA_BASE_URL}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract model names
+            models = [model["name"] for model in data.get("models", [])]
+
+            return jsonify({
+                "models": models,
+                "current": config.CHAT_MODEL
+            }), 200
+
+    except Exception as e:
+        logger.error("get_models_failed", error=str(e))
+        return jsonify({
+            "error": "Failed to fetch models",
+            "message": str(e)
+        }), 500
+
+
+@app.route("/api/models/select", methods=["POST"])
+async def select_model():
+    """Update the selected chat model.
+
+    Expects JSON body:
+    {
+        "model": "model_name"
+    }
+    """
+    try:
+        data = await request.get_json()
+
+        if not data or "model" not in data:
+            return jsonify({"error": "Missing 'model' in request body"}), 400
+
+        model_name = data["model"].strip()
+
+        if not model_name:
+            return jsonify({"error": "Model name cannot be empty"}), 400
+
+        # Update the config
+        config.CHAT_MODEL = model_name
+
+        logger.info("chat_model_updated", model=model_name)
+
+        return jsonify({
+            "success": True,
+            "model": model_name
+        }), 200
+
+    except Exception as e:
+        logger.error("select_model_failed", error=str(e))
+        return jsonify({
+            "error": "Failed to update model",
+            "message": str(e)
+        }), 500
+
+
 @app.errorhandler(404)
 async def not_found(error):
     """Handle 404 errors."""

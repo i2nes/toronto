@@ -43,18 +43,63 @@
     <!-- Main Content Area -->
     <div class="flex flex-col flex-1">
     <!-- Header -->
-    <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300">
-        <div class="navbar max-w-4xl mx-auto px-4">
+    <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300 min-h-[4rem]">
+        <div class="navbar max-w-4xl mx-auto px-4 min-h-[4rem]">
             <div class="flex-1">
                 <div class="flex items-center gap-2">
                     <i data-lucide="bot" class="w-6 h-6"></i>
                     <h1 class="text-lg font-bold">AI Assistant</h1>
                 </div>
             </div>
-            <div class="flex-none gap-2">
-                <!-- Status Badges -->
-                <div class="badge badge-primary badge-sm">Phase 3</div>
-                <div class="badge badge-ghost badge-sm">{{ chat_model }}</div>
+            <div class="flex-none flex items-center gap-2">
+                <!-- Model Selector Dropdown -->
+                <div class="relative" @keydown.escape="modelDropdownOpen = false">
+                    <button
+                        type="button"
+                        class="btn btn-ghost btn-sm normal-case gap-1"
+                        @click="modelDropdownOpen = !modelDropdownOpen"
+                        :aria-expanded="modelDropdownOpen.toString()"
+                        aria-haspopup="menu"
+                        aria-controls="model-dropdown-menu"
+                    >
+                        <i data-lucide="cpu" class="w-4 h-4"></i>
+                        <span class="select-none" x-text="currentModel"></span>
+                        <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                    </button>
+
+                    <ul
+                        x-cloak
+                        x-show="modelDropdownOpen"
+                        x-transition:enter="transition ease-out duration-100"
+                        x-transition:enter-start="opacity-0 scale-95"
+                        x-transition:enter-end="opacity-100 scale-100"
+                        x-transition:leave="transition ease-in duration-75"
+                        x-transition:leave-start="opacity-100 scale-100"
+                        x-transition:leave-end="opacity-0 scale-95"
+                        @click.outside="modelDropdownOpen = false"
+                        id="model-dropdown-menu"
+                        tabindex="-1"
+                        role="menu"
+                        class="absolute top-full right-0 mt-2 z-50 menu p-2 shadow-lg bg-base-200 rounded-box w-56"
+                        style="transform-origin: top right;"
+                    >
+                        <template x-if="availableModels.length === 0">
+                            <li><span class="text-base-content/60 text-sm select-none">Loading models...</span></li>
+                        </template>
+
+                        <template x-for="model in availableModels" :key="model">
+                            <li>
+                                <a
+                                    role="menuitem"
+                                    @click="selectModel(model); modelDropdownOpen = false"
+                                    class="cursor-pointer select-none"
+                                    :class="{ 'active': model === currentModel }"
+                                    x-text="model"
+                                ></a>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
 
                 <!-- Theme Toggle -->
                 <button
@@ -230,10 +275,57 @@ function chatApp() {
         userInput: '',
         isProcessing: false,
         error: null,
+        availableModels: [],
+        currentModel: '{{ chat_model }}',
+        modelDropdownOpen: false,
 
         init() {
             this.fetchSessions();
+            this.fetchModels();
             this.$refs.input.focus();
+        },
+
+        async fetchModels() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+                this.availableModels = data.models || [];
+                this.currentModel = data.current || '{{ chat_model }}';
+            } catch (err) {
+                console.error('Failed to fetch models:', err);
+                // Fallback to showing current model
+                this.availableModels = ['{{ chat_model }}'];
+            }
+        },
+
+        async selectModel(modelName) {
+            if (modelName === this.currentModel) return;
+
+            try {
+                const response = await fetch('/api/models/select', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelName }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to update model');
+                }
+
+                // Update current model
+                this.currentModel = modelName;
+
+                // Start a new chat to use the new model
+                this.startNewChat();
+
+                // Show success message (optional)
+                console.log(`Switched to model: ${modelName}`);
+            } catch (err) {
+                this.error = `Failed to switch model: ${err.message}`;
+                console.error(err);
+            }
         },
 
         async fetchSessions() {
