@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Chat - Toronto AI Assistant{% endblock %}
+{% block title %}Chat - AI Assistant{% endblock %}
 
 {% block content %}
 <div class="flex flex-col h-screen bg-base-100" x-data="chatApp()">
@@ -8,7 +8,10 @@
     <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300">
         <div class="navbar max-w-4xl mx-auto px-4">
             <div class="flex-1">
-                <h1 class="text-lg font-bold">Toronto AI</h1>
+                <div class="flex items-center gap-2">
+                    <i data-lucide="bot" class="w-6 h-6"></i>
+                    <h1 class="text-lg font-bold">AI Assistant</h1>
+                </div>
             </div>
             <div class="flex-none gap-2">
                 <!-- Status Badges -->
@@ -56,15 +59,11 @@
                     <div class="flex gap-4">
                         <!-- Avatar -->
                         <div class="flex-shrink-0">
-                            <div class="avatar placeholder">
-                                <div class="w-8 h-8 rounded-full"
-                                    :class="{
-                                        'bg-primary text-primary-content': msg.role === 'user' || msg.role === 'assistant',
-                                        'bg-error text-error-content': msg.role === 'error'
-                                    }"
-                                >
-                                    <i :data-lucide="msg.role === 'user' ? 'user' : (msg.role === 'error' ? 'alert-triangle' : 'bot')" class="w-5 h-5"></i>
-                                </div>
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-base-200">
+                                <i :data-lucide="msg.role === 'user' ? 'user' : (msg.role === 'error' ? 'alert-triangle' : 'bot')"
+                                   class="w-5 h-5"
+                                   :class="msg.role === 'error' ? 'text-error' : 'text-base-content'"
+                                ></i>
                             </div>
                         </div>
 
@@ -132,7 +131,7 @@
                         x-ref="input"
                         x-model="userInput"
                         type="text"
-                        placeholder="Message Toronto AI..."
+                        placeholder="Message AI Assistant..."
                         class="input input-bordered join-item flex-1 text-base"
                         maxlength="2000"
                         autocomplete="off"

@@ -111,3 +111,6 @@ logs/
 
 # Node modules
 node_modules/
+
+# Other
+notess/
