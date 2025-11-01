@@ -18,12 +18,12 @@
 ✅ Phase 2: RAG Pipeline - Indexing (COMPLETED - 2025-11-01)
 ✅ Phase 3: RAG-Enhanced Chat (COMPLETED - 2025-11-01)
 ✅ Phase 4: Sessions & Memory (COMPLETED - 2025-11-01)
-📋 Phase 5: Tool Calling (PENDING)
+✅ Phase 5: Tool Calling (COMPLETED - 2025-11-01)
 📋 Phase 6: Polish & Production (PENDING)
 📋 Phase 7: Advanced Features (OPTIONAL)
 ```
 
-**🎉 Working Demo:** http://localhost:5001 (Multi-turn conversations with session management!)
+**🎉 Working Demo:** http://localhost:5001 (RAG chat with tool calling - ask about weather!)
 
 **⏱️ Time Spent:**
 - Phase 0: ~2 hours (setup, validation)
@@ -31,7 +31,8 @@
 - Phase 2: ~2 hours (RAG pipeline implementation)
 - Phase 3: ~2 hours (retrieval integration + UI updates)
 - Phase 4: ~2 hours (session management + conversation memory)
-- **Total:** ~10 hours from zero to multi-turn RAG chat with sessions
+- Phase 5: ~2 hours (tool calling system + weather/search tools)
+- **Total:** ~12 hours from zero to RAG chat with tools and sessions
 
 **📦 What's Built:**
 - ✅ Full-stack Quart app with async Ollama client
@@ -50,6 +51,11 @@
 - ✅ Sidebar UI with session list and "New Chat" button
 - ✅ Auto-generated session titles from first message
 - ✅ Multi-turn conversations with full history persistence
+- ✅ MCP-style tool registry with Pydantic schemas
+- ✅ Weather tool (Open-Meteo API, 5-min cache, geocoding support)
+- ✅ Web search tool (DuckDuckGo HTML scraping with security filtering)
+- ✅ Tool execution loop with 30s timeout and error recovery
+- ✅ UI indicators showing which tools were used
 
 ---
 
@@ -590,34 +596,59 @@ If the information is not in the notes, say so. Always cite your sources like [n
 
 ---
 
-## Phase 5: Tool Calling (Day 8-9)
+## Phase 5: Tool Calling ✅ COMPLETED
 
 **Goal:** Add weather + web search tools. LLM can call tools when needed.
 
+**Status:** ✅ Completed 2025-11-01
+**Demo:** http://localhost:5001 - Try "What's the weather in Lisbon?"
+
 ### Tasks
 
-1. **Tool registry** (`app/tools/registry.py`)
-   - Implement Tool dataclass from ARCHITECTURE.md
-   - JSON parsing from LLM responses
-   - Tool execution loop
+- [x] **Tool registry** (`app/tools/registry.py`)
+  - Implemented Tool dataclass with Pydantic input/output models
+  - JSON parser handles markdown code blocks (```json ... ```)
+  - Tool execution with 30-second timeout protection
+  - `get_tools_description()` generates LLM-ready tool documentation
+  - Global registry with automatic tool registration
 
-2. **Weather tool** (`app/tools/weather.py`)
-   - Call Open-Meteo API
-   - Cache results (5 min TTL)
+- [x] **Weather tool** (`app/tools/weather.py`)
+  - Open-Meteo API integration (free, no API key)
+  - Geocoding support (city names → lat/lon coordinates)
+  - Returns current weather + 12-hour forecast
+  - 5-minute in-memory cache (reduces API calls)
+  - WMO weather code mapping (95+ conditions)
+  - Pydantic validation for location input
 
-3. **Search tool** (`app/tools/websearch.py`)
-   - DuckDuckGo HTTP wrapper
-   - Apply SEARCH_MAX_RESULTS, domain filters
+- [x] **Search tool** (`app/tools/websearch.py`)
+  - DuckDuckGo HTML scraping (no API key required)
+  - Returns titles, URLs, and snippets (max 10 results)
+  - Security: domain filtering, content sanitization, length limits
+  - HTML tag stripping and entity decoding
+  - `SEARCH_MAX_RESULTS`, `SEARCH_ALLOWED_DOMAINS`, `SEARCH_BLOCKED_DOMAINS` config
 
-4. **Tool-aware prompt**
-   - Update system prompt with tool descriptions
-   - Implement tool call → execute → final answer loop
+- [x] **Tool-aware prompt** (`app/main.py`)
+  - Updated system prompt with tool descriptions
+  - Tool execution loop (max 3 iterations to prevent infinite loops)
+  - LLM → JSON tool call → execute → result → LLM formats natural language
+  - Error recovery: failed tools prompt LLM to respond without tools
 
-5. **UI indicators for tool use**
-   - Show "Using weather tool..." loading state
-   - Display tool results in chat
+- [x] **UI indicators for tool use** (`web/templates/chat.html`)
+  - "Used tool: [tool_name]" badge displayed with assistant responses
+  - Styled with DaisyUI `alert-info` component
+  - Wrench icon for visual distinction
+  - Tool calls persisted with messages for session history
 
 **Deliverable:** ✅ Can ask "What's the weather in Lisbon?" and get real data.
+
+**What Works:**
+- ✅ Weather queries return real-time data from Open-Meteo API
+- ✅ LLM autonomously decides when to use tools
+- ✅ Tool results formatted into natural language responses
+- ✅ 5-minute caching reduces duplicate API calls
+- ✅ UI shows which tools were used
+- ✅ Graceful error handling with 30s timeout
+- ✅ Security: input validation, domain filtering, sanitization
 
 ---
 
