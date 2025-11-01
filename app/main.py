@@ -4,22 +4,39 @@ import structlog
 import json
 import re
 from pathlib import Path
+from datetime import datetime
 
 from app import config
 from app.llm_client import ollama_client
 from app.rag.retriever import get_retriever
 from app.memory import ConversationManager
 from app.tools import get_registry
+from app.rag.watcher import get_watcher, stop_watcher
 
 # Configure structured logging
+import logging
+import sys
+
+# Setup Python's logging to output to both console and file
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(config.DATA_DIR / "app.log", mode="a"),
+    ],
+)
+
+# Configure structlog
 structlog.configure(
     processors=[
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
+        structlog.dev.ConsoleRenderer()  # Human-readable format for development
     ],
     wrapper_class=structlog.stdlib.BoundLogger,
     logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
 )
 
 logger = structlog.get_logger()
@@ -36,6 +53,28 @@ conversation_manager = ConversationManager(context_window_size=6)
 
 # Initialize tool registry
 tool_registry = get_registry()
+
+
+@app.before_serving
+async def startup():
+    """Startup tasks - initialize file watcher."""
+    try:
+        # Start file watcher for auto-reindexing
+        watcher = await get_watcher()
+        logger.info("file_watcher_started", notes_dir=str(config.NOTES_DIR))
+    except Exception as e:
+        logger.error("file_watcher_start_failed", error=str(e), error_type=type(e).__name__)
+        # Don't fail startup if watcher fails - app can still work without it
+
+
+@app.after_serving
+async def shutdown():
+    """Shutdown tasks - stop file watcher."""
+    try:
+        await stop_watcher()
+        logger.info("file_watcher_stopped")
+    except Exception as e:
+        logger.error("file_watcher_stop_failed", error=str(e))
 
 
 def _parse_tool_call(text: str) -> dict | None:
@@ -194,7 +233,12 @@ async def chat():
                         context_length=len(context),
                     )
                 else:
-                    logger.info("no_relevant_context_found")
+                    # Empty retrieval - gracefully fallback to chat without RAG
+                    logger.info(
+                        "no_relevant_context_found",
+                        query=user_message[:100],
+                        message="Proceeding with general knowledge response",
+                    )
 
             except Exception as e:
                 # Log RAG error but continue with chat (graceful degradation)
@@ -202,8 +246,9 @@ async def chat():
                     "rag_retrieval_failed",
                     error=str(e),
                     error_type=type(e).__name__,
+                    message="Continuing without RAG context",
                 )
-                # Continue without RAG
+                # Continue without RAG - app remains functional
 
         # Build system prompt with tool information
         tools_description = tool_registry.get_tools_description()
@@ -259,13 +304,41 @@ INSTRUCTIONS:
         max_tool_iterations = 3  # Prevent infinite loops
 
         for iteration in range(max_tool_iterations):
-            # Call Ollama
-            response = await ollama_client.chat(messages)
-            assistant_message = response.get("message", {}).get("content", "")
+            # Call Ollama with error handling
+            try:
+                response = await ollama_client.chat(messages)
+                assistant_message = response.get("message", {}).get("content", "")
 
-            if not assistant_message:
-                logger.error("empty_ollama_response", response=response)
-                return jsonify({"error": "Empty response from LLM"}), 500
+                if not assistant_message:
+                    logger.error("empty_ollama_response", response=response)
+                    return jsonify({"error": "Empty response from LLM"}), 500
+
+            except Exception as ollama_error:
+                import httpx
+                # Handle Ollama connection failures specifically
+                if isinstance(ollama_error, httpx.ConnectError):
+                    logger.error(
+                        "ollama_connection_failed",
+                        error=str(ollama_error),
+                        base_url=config.OLLAMA_BASE_URL,
+                    )
+                    return jsonify({
+                        "error": "Unable to connect to AI service. Please check that Ollama is running."
+                    }), 503
+                elif isinstance(ollama_error, httpx.TimeoutException):
+                    logger.error("ollama_timeout", error=str(ollama_error))
+                    return jsonify({
+                        "error": "AI service request timed out. Please try again."
+                    }), 504
+                else:
+                    logger.error(
+                        "ollama_request_failed",
+                        error=str(ollama_error),
+                        error_type=type(ollama_error).__name__,
+                    )
+                    return jsonify({
+                        "error": "AI service error. Please try again."
+                    }), 500
 
             # Check if response contains a tool call
             tool_call = _parse_tool_call(assistant_message)
@@ -458,31 +531,107 @@ async def health_ready():
 
     Checks:
     - Ollama service is reachable
-    - Required models are available
+    - Required models are available (chat + embedding)
+    - RAG index exists and dimension matches
+    - Database is accessible
     """
     checks = {
         "status": "healthy",
         "ollama": False,
-        "models": False,
+        "chat_model": False,
+        "embedding_model": False,
+        "rag_index": False,
+        "database": False,
+        "dimension_validation": None,
     }
 
     try:
-        # Check Ollama connectivity
+        # Check Ollama connectivity and models
         models = await ollama_client.list_models()
         checks["ollama"] = True
 
-        # Check required models
+        # Check chat model
         if config.CHAT_MODEL in models:
-            checks["models"] = True
+            checks["chat_model"] = True
         else:
-            checks["status"] = "unhealthy"
-            checks["error"] = f"Missing chat model: {config.CHAT_MODEL}"
+            checks["status"] = "degraded"
+            checks["warnings"] = checks.get("warnings", []) + [
+                f"Chat model missing: {config.CHAT_MODEL}"
+            ]
 
-        status_code = 200 if checks["status"] == "healthy" else 503
+        # Check embedding model
+        if config.EMBEDDING_MODEL in models:
+            checks["embedding_model"] = True
+        else:
+            checks["status"] = "degraded"
+            checks["warnings"] = checks.get("warnings", []) + [
+                f"Embedding model missing: {config.EMBEDDING_MODEL}"
+            ]
+
+        # Check RAG index and dimension validation
+        try:
+            from app.rag.store_faiss import FAISSVectorStore
+            from app import db
+
+            vector_store = FAISSVectorStore()
+
+            # Check if index exists
+            if vector_store.index_path.exists() and vector_store.metadata_path.exists():
+                checks["rag_index"] = True
+
+                # Load and validate dimensions
+                try:
+                    await vector_store.load_index()
+                    checks["dimension_validation"] = {
+                        "status": "valid",
+                        "dimension": vector_store.dimension,
+                        "model": vector_store.embedding_model,
+                        "vector_count": vector_store.index.ntotal if vector_store.index else 0,
+                    }
+                except ValueError as e:
+                    # Dimension mismatch
+                    checks["dimension_validation"] = {
+                        "status": "mismatch",
+                        "error": str(e),
+                    }
+                    checks["status"] = "unhealthy"
+                    checks["error"] = "RAG dimension mismatch - reindex required"
+            else:
+                checks["rag_index"] = False
+                checks["dimension_validation"] = {"status": "no_index"}
+                checks["warnings"] = checks.get("warnings", []) + [
+                    "No RAG index found - run reindex"
+                ]
+
+        except Exception as e:
+            logger.error("rag_health_check_failed", error=str(e), error_type=type(e).__name__)
+            checks["rag_index"] = False
+            checks["dimension_validation"] = {"status": "error", "error": str(e)}
+
+        # Check database connectivity
+        try:
+            from app import db
+            chunk_count = db.get_chunk_count()
+            checks["database"] = True
+            checks["database_info"] = {"chunk_count": chunk_count}
+        except Exception as e:
+            logger.error("database_health_check_failed", error=str(e))
+            checks["database"] = False
+            checks["status"] = "unhealthy"
+            checks["error"] = f"Database error: {str(e)}"
+
+        # Determine final status code
+        if checks["status"] == "healthy":
+            status_code = 200
+        elif checks["status"] == "degraded":
+            status_code = 200  # Still operational but with warnings
+        else:
+            status_code = 503
+
         return jsonify(checks), status_code
 
     except Exception as e:
-        logger.error("health_check_failed", error=str(e))
+        logger.error("health_check_failed", error=str(e), error_type=type(e).__name__)
         checks["status"] = "unhealthy"
         checks["error"] = str(e)
         return jsonify(checks), 503
@@ -492,6 +641,111 @@ async def health_ready():
 async def health_live():
     """Liveness probe - check if app is running."""
     return jsonify({"status": "alive"}), 200
+
+
+@app.route("/metrics")
+async def metrics():
+    """Metrics endpoint for observability.
+
+    Returns:
+        JSON with application metrics including sessions, messages,
+        RAG index stats, and database statistics
+    """
+    try:
+        from app import db
+        from app.rag.store_faiss import FAISSVectorStore
+
+        metrics_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "toronto-ai-assistant",
+            "version": config.STATIC_VERSION,
+        }
+
+        # Session metrics
+        try:
+            all_sessions = db.list_sessions(limit=1000)  # Get all sessions
+            metrics_data["sessions"] = {
+                "total": len(all_sessions),
+                "recent_count": len(db.list_sessions(limit=10)),
+            }
+        except Exception as e:
+            logger.error("sessions_metrics_failed", error=str(e))
+            metrics_data["sessions"] = {"error": str(e)}
+
+        # Message metrics
+        try:
+            # Get total message count across all sessions
+            from app.db import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM messages")
+            total_messages = cursor.fetchone()[0]
+            conn.close()
+
+            metrics_data["messages"] = {
+                "total": total_messages,
+            }
+        except Exception as e:
+            logger.error("messages_metrics_failed", error=str(e))
+            metrics_data["messages"] = {"error": str(e)}
+
+        # RAG index metrics
+        try:
+            vector_store = FAISSVectorStore()
+            if vector_store.index_path.exists():
+                await vector_store.load_index()
+                stats = vector_store.get_stats()
+                metrics_data["rag_index"] = {
+                    "vector_count": stats.get("vector_count", 0),
+                    "dimension": stats.get("dimension"),
+                    "embedding_model": stats.get("embedding_model"),
+                    "index_exists": stats.get("index_exists_on_disk", False),
+                }
+            else:
+                metrics_data["rag_index"] = {
+                    "status": "not_initialized",
+                    "vector_count": 0,
+                }
+        except Exception as e:
+            logger.error("rag_metrics_failed", error=str(e))
+            metrics_data["rag_index"] = {"error": str(e)}
+
+        # Database metrics
+        try:
+            chunk_count = db.get_chunk_count()
+            index_metadata = db.get_latest_index_metadata()
+
+            metrics_data["database"] = {
+                "chunk_count": chunk_count,
+                "last_indexed_at": index_metadata.get("indexed_at") if index_metadata else None,
+                "total_notes": index_metadata.get("total_notes") if index_metadata else None,
+            }
+        except Exception as e:
+            logger.error("database_metrics_failed", error=str(e))
+            metrics_data["database"] = {"error": str(e)}
+
+        # Model configuration
+        metrics_data["models"] = {
+            "chat_model": config.CHAT_MODEL,
+            "embedding_model": config.EMBEDDING_MODEL,
+        }
+
+        # Configuration
+        metrics_data["config"] = {
+            "chunk_size": config.CHUNK_SIZE,
+            "chunk_overlap": config.CHUNK_OVERLAP,
+            "retrieval_top_k": config.RETRIEVAL_TOP_K,
+            "max_context_tokens": config.MAX_CONTEXT_TOKENS,
+        }
+
+        return jsonify(metrics_data), 200
+
+    except Exception as e:
+        logger.error("metrics_endpoint_error", error=str(e), error_type=type(e).__name__)
+        return jsonify({
+            "error": "Failed to generate metrics",
+            "message": str(e)
+        }), 500
 
 
 @app.errorhandler(404)

@@ -378,6 +378,65 @@ def get_chunk_count() -> int:
         conn.close()
 
 
+def get_chunk_ids_for_file(note_path: str) -> List[int]:
+    """Get all vector IDs for chunks from a specific file.
+
+    Args:
+        note_path: Path to the note file (relative to notes/)
+
+    Returns:
+        List of vector IDs for chunks from this file
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT vector_id
+            FROM chunks
+            WHERE note_path = ?
+        """, (note_path,))
+
+        rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
+    except Exception as e:
+        logger.error("chunk_ids_retrieval_failed", error=str(e), note_path=note_path)
+        raise
+    finally:
+        conn.close()
+
+
+def delete_chunks_for_file(note_path: str) -> int:
+    """Delete all chunks for a specific file.
+
+    Args:
+        note_path: Path to the note file (relative to notes/)
+
+    Returns:
+        Number of chunks deleted
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT COUNT(*) FROM chunks WHERE note_path = ?", (note_path,))
+        count = cursor.fetchone()[0]
+
+        cursor.execute("DELETE FROM chunks WHERE note_path = ?", (note_path,))
+        conn.commit()
+
+        logger.info("chunks_deleted_for_file", note_path=note_path, count=count)
+        return count
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("chunks_delete_failed", error=str(e), note_path=note_path)
+        raise
+    finally:
+        conn.close()
+
+
 # Session Management Functions
 
 def create_session(session_id: str, title: Optional[str] = None) -> str:

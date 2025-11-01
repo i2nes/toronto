@@ -358,6 +358,61 @@ class FAISSVectorStore:
         # Initialize new index
         await self.init_new_index()
 
+    async def delete_by_ids(self, vector_ids: List[int]) -> None:
+        """Delete vectors by their IDs.
+
+        Note: Since IndexFlatL2 doesn't support deletion, this method rebuilds
+        the index without the specified vectors. This is acceptable for small
+        indexes (<100k vectors) but would need optimization for larger scales.
+
+        Args:
+            vector_ids: List of vector IDs to delete
+
+        Raises:
+            RuntimeError: If deletion fails
+        """
+        if self.index is None:
+            raise RuntimeError("No index initialized. Call load_index() first.")
+
+        if not vector_ids:
+            return
+
+        logger.info("deleting_vectors", count=len(vector_ids), vector_ids=vector_ids)
+
+        # Get all vectors except the ones to delete
+        total_vectors = self.index.ntotal
+        ids_to_delete = set(vector_ids)
+
+        # Extract vectors to keep
+        vectors_to_keep = []
+        for i in range(total_vectors):
+            if i not in ids_to_delete:
+                # Reconstruct vector from index
+                vector = self.index.reconstruct(i)
+                vectors_to_keep.append(vector)
+
+        # Rebuild index with remaining vectors
+        logger.info(
+            "rebuilding_index_after_deletion",
+            original_count=total_vectors,
+            deleted_count=len(ids_to_delete),
+            remaining_count=len(vectors_to_keep),
+        )
+
+        # Create new index with same dimension
+        self.index = faiss.IndexFlatL2(self.dimension)
+
+        # Re-add all remaining vectors
+        if vectors_to_keep:
+            vectors_array = np.array(vectors_to_keep, dtype=np.float32)
+            self.index.add(vectors_array)
+
+        logger.info(
+            "vectors_deleted",
+            deleted_count=len(ids_to_delete),
+            new_vector_count=self.index.ntotal,
+        )
+
 
 # Singleton instance for convenience
 _store_instance: Optional[FAISSVectorStore] = None
