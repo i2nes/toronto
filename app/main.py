@@ -326,9 +326,9 @@ INSTRUCTIONS:
                         "error": "Unable to connect to AI service. Please check that Ollama is running."
                     }), 503
                 elif isinstance(ollama_error, httpx.TimeoutException):
-                    logger.error("ollama_timeout", error=str(ollama_error))
+                    logger.error("ollama_timeout", error=str(ollama_error), model=config.CHAT_MODEL)
                     return jsonify({
-                        "error": "AI service request timed out. Please try again."
+                        "error": f"AI service request timed out after 5 minutes. The model '{config.CHAT_MODEL}' may be too large or slow. Try using a smaller/faster model."
                     }), 504
                 else:
                     logger.error(

@@ -11,12 +11,12 @@ logger = structlog.get_logger()
 class OllamaClient:
     """Async client for interacting with Ollama API."""
 
-    def __init__(self, base_url: str = None, timeout: float = 60.0):
+    def __init__(self, base_url: str = None, timeout: float = 300.0):
         """Initialize Ollama client.
 
         Args:
             base_url: Ollama API base URL (defaults to config.OLLAMA_BASE_URL)
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default: 300s/5min for large models)
         """
         self.base_url = base_url or config.OLLAMA_BASE_URL
         self.timeout = timeout
@@ -79,11 +79,26 @@ class OllamaClient:
 
                 return data
 
+        except httpx.TimeoutException as e:
+            logger.error(
+                "ollama_request_timeout",
+                error=str(e),
+                timeout=self.timeout,
+                model=model,
+            )
+            raise
         except httpx.ConnectError as e:
             logger.error("ollama_connection_error", error=str(e), base_url=self.base_url)
             raise
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "ollama_http_error",
+                error=str(e),
+                status_code=e.response.status_code,
+            )
+            raise
         except httpx.HTTPError as e:
-            logger.error("ollama_http_error", error=str(e), status_code=getattr(e.response, 'status_code', None))
+            logger.error("ollama_request_failed", error=str(e), error_type=type(e).__name__)
             raise
 
     async def embeddings(
@@ -134,8 +149,16 @@ class OllamaClient:
 
                 return data
 
+        except httpx.TimeoutException as e:
+            logger.error(
+                "ollama_embedding_timeout",
+                error=str(e),
+                timeout=self.timeout,
+                model=model,
+            )
+            raise
         except httpx.HTTPError as e:
-            logger.error("ollama_embedding_error", error=str(e))
+            logger.error("ollama_embedding_error", error=str(e), error_type=type(e).__name__)
             raise
 
     async def list_models(self) -> List[str]:
