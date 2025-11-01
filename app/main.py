@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app import config
 from app.llm_client import ollama_client
+from app.rag.retriever import get_retriever
 
 # Configure structured logging
 structlog.configure(
@@ -39,17 +40,19 @@ async def index():
 
 @app.route("/api/chat", methods=["POST"])
 async def chat():
-    """Handle chat completion requests.
+    """Handle chat completion requests with RAG.
 
     Expects JSON body:
     {
-        "message": "user message text"
+        "message": "user message text",
+        "use_rag": true  // optional, defaults to true
     }
 
     Returns JSON:
     {
         "response": "assistant response text",
-        "model": "model_name"
+        "model": "model_name",
+        "sources": [...]  // if RAG was used
     }
     """
     try:
@@ -61,6 +64,7 @@ async def chat():
             return jsonify({"error": "Missing 'message' in request body"}), 400
 
         user_message = data["message"].strip()
+        use_rag = data.get("use_rag", True)  # RAG enabled by default
 
         if not user_message:
             return jsonify({"error": "Message cannot be empty"}), 400
@@ -72,15 +76,72 @@ async def chat():
         logger.info(
             "chat_request_received",
             message_length=len(user_message),
+            use_rag=use_rag,
             user_message_preview=user_message[:100],
         )
 
-        # Build messages for LLM (simple system prompt for now)
+        # Retrieve context if RAG is enabled
+        context = ""
+        sources = []
+
+        if use_rag:
+            try:
+                retriever = await get_retriever()
+                results = await retriever.retrieve(user_message)
+
+                if results:
+                    # Format context for prompt
+                    context = await retriever.retrieve_context(user_message)
+
+                    # Format sources for response
+                    sources = [
+                        {
+                            "source": result.source,
+                            "content_preview": result.content[:200] + "..."
+                            if len(result.content) > 200
+                            else result.content,
+                            "relevance": round(result.relevance_score, 3),
+                        }
+                        for result in results
+                    ]
+
+                    logger.info(
+                        "rag_retrieval_completed",
+                        num_sources=len(sources),
+                        context_length=len(context),
+                    )
+                else:
+                    logger.info("no_relevant_context_found")
+
+            except Exception as e:
+                # Log RAG error but continue with chat (graceful degradation)
+                logger.error(
+                    "rag_retrieval_failed",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                # Continue without RAG
+
+        # Build system prompt
+        if context:
+            system_content = f"""You are a helpful AI assistant with access to a knowledge base.
+
+Use the following context from the knowledge base to answer the user's question. If the context doesn't contain relevant information, you can still provide a helpful response based on your general knowledge, but mention that you don't have specific information in the knowledge base about that topic.
+
+Context from knowledge base:
+{context}
+
+Instructions:
+- Answer based on the context when relevant
+- Be concise and friendly
+- If you reference information from the context, you can mention the source
+- If the context doesn't help, say so and provide your best answer"""
+        else:
+            system_content = "You are a helpful AI assistant. Be concise and friendly."
+
+        # Build messages for LLM
         messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful AI assistant. Be concise and friendly.",
-            },
+            {"role": "system", "content": system_content},
             {"role": "user", "content": user_message},
         ]
 
@@ -96,12 +157,19 @@ async def chat():
         logger.info(
             "chat_response_sent",
             response_length=len(assistant_message),
+            used_rag=bool(context),
         )
 
-        return jsonify({
+        # Build response
+        response_data = {
             "response": assistant_message,
             "model": config.CHAT_MODEL,
-        })
+        }
+
+        if sources:
+            response_data["sources"] = sources
+
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error("chat_endpoint_error", error=str(e), error_type=type(e).__name__)

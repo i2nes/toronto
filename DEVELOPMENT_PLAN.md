@@ -16,20 +16,21 @@
 ✅ Phase 0: Project Bootstrap (COMPLETED - 2025-11-01)
 ✅ Phase 1: Basic Chat UI (COMPLETED - 2025-11-01)
 ✅ Phase 2: RAG Pipeline - Indexing (COMPLETED - 2025-11-01)
-📋 Phase 3: RAG-Enhanced Chat (READY TO START)
+✅ Phase 3: RAG-Enhanced Chat (COMPLETED - 2025-11-01)
 📋 Phase 4: Sessions & Memory (PENDING)
 📋 Phase 5: Tool Calling (PENDING)
 📋 Phase 6: Polish & Production (PENDING)
 📋 Phase 7: Advanced Features (OPTIONAL)
 ```
 
-**🎉 Working Demo:** http://localhost:5001 (server running on port 5001)
+**🎉 Working Demo:** http://localhost:5001 (RAG-enhanced chat is live!)
 
 **⏱️ Time Spent:**
 - Phase 0: ~2 hours (setup, validation)
 - Phase 1: ~2 hours (implementation + Alpine.js refactor)
 - Phase 2: ~2 hours (RAG pipeline implementation)
-- **Total:** ~6 hours from zero to indexed notes
+- Phase 3: ~2 hours (retrieval integration + UI updates)
+- **Total:** ~8 hours from zero to RAG-enhanced chat
 
 **📦 What's Built:**
 - ✅ Full-stack Quart app with async Ollama client
@@ -40,6 +41,9 @@
 - ✅ Complete RAG indexing pipeline (markdown → chunks → embeddings → FAISS)
 - ✅ 11 chunks indexed from 3 sample notes
 - ✅ Runtime embedding dimension detection (1024d)
+- ✅ Semantic retrieval with FAISS vector search
+- ✅ Context-enhanced chat responses
+- ✅ Source citations in UI (collapsible sources with relevance scores)
 
 ---
 
@@ -443,9 +447,28 @@
 
 ---
 
-## Phase 3: RAG-Enhanced Chat (Day 4-5)
+## Phase 3: RAG-Enhanced Chat ✅ COMPLETED
 
 **Goal:** Integrate retrieval into chat. Chat now answers questions using your notes.
+
+**Status:** ✅ Completed 2025-11-01
+
+**Deliverables:**
+- ✅ Retriever module with semantic search (`app/rag/retriever.py`)
+- ✅ Updated `/api/chat` endpoint with RAG integration
+- ✅ Context-enhanced system prompts
+- ✅ Source citations in API responses
+- ✅ UI updates to display sources (collapsible with relevance scores)
+- ✅ Graceful degradation (chat works even if RAG fails)
+- ✅ Tested with multiple queries - successfully retrieves and uses context
+
+**Key Features:**
+- Automatic context retrieval for every query (can be disabled with `use_rag: false`)
+- Top-K retrieval (default: 8 chunks)
+- Relevance scoring with L2 distance
+- Source attribution in responses
+- Collapsible source view in UI
+- Content previews (200 chars) for each source
 
 ### Tasks
 
