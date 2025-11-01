@@ -120,6 +120,30 @@ def init_database() -> None:
             ON messages(created_at)
         """)
 
+        # Table for todos
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT,
+                completed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        # Index for completed status
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_todos_completed
+            ON todos(completed)
+        """)
+
+        # Index for created_at for ordering todos
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_todos_created_at
+            ON todos(created_at)
+        """)
+
         conn.commit()
         logger.info("database_initialized", db_path=str(DB_PATH))
 
@@ -719,7 +743,258 @@ def get_recent_messages(session_id: str, limit: int = 6) -> List[Dict[str, Any]]
         conn.close()
 
 
+# ============================================================
+# TODO Functions
+# ============================================================
+
+def create_todo(title: str, description: str = None) -> int:
+    """Create a new todo.
+
+    Args:
+        title: The todo title
+        description: Optional description
+
+    Returns:
+        The ID of the created todo
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        now = datetime.now().isoformat()
+        cursor.execute("""
+            INSERT INTO todos (title, description, completed, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+        """, (title, description, now, now))
+
+        conn.commit()
+        todo_id = cursor.lastrowid
+
+        logger.info("todo_created", todo_id=todo_id, title=title)
+        return todo_id
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("todo_create_failed", error=str(e))
+        raise
+    finally:
+        conn.close()
+
+
+def get_todo(todo_id: int) -> Optional[Dict[str, Any]]:
+    """Get a specific todo by ID.
+
+    Args:
+        todo_id: The todo ID
+
+    Returns:
+        Todo dict or None if not found
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT * FROM todos WHERE id = ?", (todo_id,))
+        row = cursor.fetchone()
+
+        if row:
+            todo = dict(row)
+            todo["completed"] = bool(todo["completed"])
+            return todo
+        return None
+
+    except Exception as e:
+        logger.error("todo_get_failed", error=str(e), todo_id=todo_id)
+        raise
+    finally:
+        conn.close()
+
+
+def list_todos(completed: Optional[bool] = None) -> List[Dict[str, Any]]:
+    """List all todos, optionally filtered by completion status.
+
+    Args:
+        completed: If provided, filter by completion status
+
+    Returns:
+        List of todo dicts
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        if completed is None:
+            cursor.execute("SELECT * FROM todos ORDER BY created_at DESC")
+        else:
+            cursor.execute(
+                "SELECT * FROM todos WHERE completed = ? ORDER BY created_at DESC",
+                (1 if completed else 0,)
+            )
+
+        rows = cursor.fetchall()
+        todos = []
+        for row in rows:
+            todo = dict(row)
+            todo["completed"] = bool(todo["completed"])
+            todos.append(todo)
+
+        return todos
+
+    except Exception as e:
+        logger.error("todos_list_failed", error=str(e))
+        raise
+    finally:
+        conn.close()
+
+
+def update_todo(
+    todo_id: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    completed: Optional[bool] = None
+) -> bool:
+    """Update a todo.
+
+    Args:
+        todo_id: The todo ID
+        title: Optional new title
+        description: Optional new description
+        completed: Optional new completion status
+
+    Returns:
+        True if updated, False if not found
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Build dynamic update query
+        updates = []
+        params = []
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+
+        if completed is not None:
+            updates.append("completed = ?")
+            params.append(1 if completed else 0)
+
+        if not updates:
+            return True  # Nothing to update
+
+        # Always update updated_at
+        updates.append("updated_at = ?")
+        params.append(datetime.now().isoformat())
+
+        # Add todo_id to params
+        params.append(todo_id)
+
+        query = f"UPDATE todos SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, params)
+        conn.commit()
+
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info("todo_updated", todo_id=todo_id)
+
+        return updated
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("todo_update_failed", error=str(e), todo_id=todo_id)
+        raise
+    finally:
+        conn.close()
+
+
+def delete_todo(todo_id: int) -> bool:
+    """Delete a todo.
+
+    Args:
+        todo_id: The todo ID to delete
+
+    Returns:
+        True if deleted, False if not found
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+        conn.commit()
+        deleted = cursor.rowcount > 0
+
+        if deleted:
+            logger.info("todo_deleted", todo_id=todo_id)
+
+        return deleted
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("todo_delete_failed", error=str(e), todo_id=todo_id)
+        raise
+    finally:
+        conn.close()
+
+
+def migrate_database():
+    """Run any pending database migrations."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Check if todos table exists
+        cursor.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='todos'
+        """)
+
+        if not cursor.fetchone():
+            logger.info("running_migration_create_todos_table")
+
+            # Create todos table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS todos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    completed INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            # Create indexes
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_todos_completed
+                ON todos(completed)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_todos_created_at
+                ON todos(created_at)
+            """)
+
+            conn.commit()
+            logger.info("migration_completed_todos_table_created")
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("migration_failed", error=str(e))
+        raise
+    finally:
+        conn.close()
+
+
 # Initialize database on module import if it doesn't exist
 if not DB_PATH.exists():
     init_database()
     logger.info("database_auto_initialized", db_path=str(DB_PATH))
+else:
+    # Run migrations on existing database
+    migrate_database()

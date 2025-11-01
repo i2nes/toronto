@@ -1,0 +1,430 @@
+{% extends "layout.html" %}
+
+{% block title %}TODOs - AI Assistant{% endblock %}
+
+{% block content %}
+<div class="flex h-screen bg-base-100" x-data="todosApp()">
+    <!-- Main Content Area -->
+    <div class="flex flex-col flex-1">
+        <!-- Header -->
+        <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300 min-h-16">
+            <div class="navbar max-w-4xl mx-auto px-4 min-h-16">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="check-square" class="w-6 h-6"></i>
+                        <h1 class="text-lg font-bold">TODOs</h1>
+                    </div>
+                </div>
+                <div class="flex-none flex items-center gap-2">
+                    <a href="/" class="btn btn-ghost btn-sm">
+                        <i data-lucide="message-circle" class="w-4 h-4"></i>
+                        Chat
+                    </a>
+                    <a href="/notes" class="btn btn-ghost btn-sm">
+                        <i data-lucide="file-text" class="w-4 h-4"></i>
+                        Notes
+                    </a>
+                    <!-- Theme Toggle -->
+                    <button
+                        @click="$store.theme.toggle()"
+                        class="btn btn-ghost btn-sm btn-circle"
+                        title="Toggle theme"
+                    >
+                        <i x-show="$store.theme.current === 'light'" data-lucide="moon" class="w-4 h-4"></i>
+                        <i x-show="$store.theme.current === 'dark'" data-lucide="sun" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Content Area -->
+        <div class="flex-1 overflow-y-auto">
+            <div class="max-w-4xl mx-auto px-4 py-6">
+                <!-- Create Todo Form -->
+                <div class="card bg-base-200 mb-6">
+                    <div class="card-body">
+                        <h2 class="card-title">Add New TODO</h2>
+                        <form @submit.prevent="createTodo">
+                            <div class="form-control mb-4">
+                                <input
+                                    type="text"
+                                    x-model="newTodoTitle"
+                                    class="input input-bordered"
+                                    placeholder="What needs to be done?"
+                                    required
+                                />
+                            </div>
+                            <div class="form-control mb-4">
+                                <textarea
+                                    x-model="newTodoDescription"
+                                    class="textarea textarea-bordered"
+                                    placeholder="Description (optional)"
+                                    rows="2"
+                                ></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i data-lucide="plus" class="w-5 h-5"></i>
+                                Add TODO
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Filter Tabs -->
+                <div class="tabs tabs-boxed mb-4">
+                    <a
+                        class="tab"
+                        :class="{ 'tab-active': filter === 'all' }"
+                        @click="setFilter('all')"
+                    >
+                        All (<span x-text="todos.length"></span>)
+                    </a>
+                    <a
+                        class="tab"
+                        :class="{ 'tab-active': filter === 'active' }"
+                        @click="setFilter('active')"
+                    >
+                        Active (<span x-text="activeTodos.length"></span>)
+                    </a>
+                    <a
+                        class="tab"
+                        :class="{ 'tab-active': filter === 'completed' }"
+                        @click="setFilter('completed')"
+                    >
+                        Completed (<span x-text="completedTodos.length"></span>)
+                    </a>
+                </div>
+
+                <!-- Todos List -->
+                <div class="space-y-2">
+                    <template x-for="todo in filteredTodos" :key="todo.id">
+                        <div class="card bg-base-200" :class="{ 'opacity-60': todo.completed }">
+                            <div class="card-body p-4">
+                                <div class="flex items-start gap-3">
+                                    <!-- Checkbox -->
+                                    <input
+                                        type="checkbox"
+                                        class="checkbox checkbox-primary mt-1"
+                                        :checked="todo.completed"
+                                        @change="toggleTodo(todo.id, !todo.completed)"
+                                    />
+
+                                    <!-- Content -->
+                                    <div class="flex-1 min-w-0">
+                                        <template x-if="editingTodoId !== todo.id">
+                                            <div>
+                                                <h3
+                                                    class="font-semibold"
+                                                    :class="{ 'line-through': todo.completed }"
+                                                    x-text="todo.title"
+                                                ></h3>
+                                                <p
+                                                    x-show="todo.description"
+                                                    class="text-sm text-base-content/70 mt-1"
+                                                    x-text="todo.description"
+                                                ></p>
+                                                <div class="text-xs text-base-content/50 mt-2">
+                                                    Created <span x-text="formatDate(todo.created_at)"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Edit Form -->
+                                        <template x-if="editingTodoId === todo.id">
+                                            <form @submit.prevent="saveTodoEdit(todo.id)">
+                                                <input
+                                                    type="text"
+                                                    x-model="editTodoTitle"
+                                                    class="input input-bordered input-sm w-full mb-2"
+                                                    required
+                                                />
+                                                <textarea
+                                                    x-model="editTodoDescription"
+                                                    class="textarea textarea-bordered textarea-sm w-full mb-2"
+                                                    rows="2"
+                                                ></textarea>
+                                                <div class="flex gap-2">
+                                                    <button type="submit" class="btn btn-primary btn-sm">
+                                                        Save
+                                                    </button>
+                                                    <button type="button" class="btn btn-ghost btn-sm" @click="cancelEdit">
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </form>
+                                        </template>
+                                    </div>
+
+                                    <!-- Actions -->
+                                    <div class="flex gap-1" x-show="editingTodoId !== todo.id">
+                                        <button
+                                            @click="startEdit(todo)"
+                                            class="btn btn-ghost btn-sm btn-square"
+                                            title="Edit"
+                                        >
+                                            <i data-lucide="edit" class="w-4 h-4"></i>
+                                        </button>
+                                        <button
+                                            @click="openDeleteDialog(todo)"
+                                            class="btn btn-ghost btn-sm btn-square text-error"
+                                            title="Delete"
+                                        >
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Empty State -->
+                    <div x-show="filteredTodos.length === 0" class="text-center py-12">
+                        <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-base-300 mb-4">
+                            <i data-lucide="check-circle" class="w-8 h-8"></i>
+                        </div>
+                        <p class="text-base-content/60">
+                            <span x-show="filter === 'all'">No TODOs yet. Create one above!</span>
+                            <span x-show="filter === 'active'">No active TODOs</span>
+                            <span x-show="filter === 'completed'">No completed TODOs</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-show="deleteDialogOpen" class="modal modal-open" x-cloak>
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">Delete TODO</h3>
+            <p class="py-4">
+                Are you sure you want to delete "<span x-text="todoToDelete?.title"></span>"?
+                This action cannot be undone.
+            </p>
+            <div class="modal-action">
+                <button type="button" class="btn btn-ghost" @click="closeDeleteDialog">
+                    Cancel
+                </button>
+                <button type="button" class="btn btn-error" @click="deleteTodo">
+                    Delete
+                </button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="closeDeleteDialog"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function todosApp() {
+    return {
+        todos: [],
+        filter: 'all',
+        newTodoTitle: '',
+        newTodoDescription: '',
+        editingTodoId: null,
+        editTodoTitle: '',
+        editTodoDescription: '',
+        deleteDialogOpen: false,
+        todoToDelete: null,
+        error: null,
+
+        init() {
+            this.fetchTodos();
+        },
+
+        get activeTodos() {
+            return this.todos.filter(t => !t.completed);
+        },
+
+        get completedTodos() {
+            return this.todos.filter(t => t.completed);
+        },
+
+        get filteredTodos() {
+            if (this.filter === 'active') {
+                return this.activeTodos;
+            } else if (this.filter === 'completed') {
+                return this.completedTodos;
+            }
+            return this.todos;
+        },
+
+        setFilter(filter) {
+            this.filter = filter;
+        },
+
+        async fetchTodos() {
+            try {
+                const response = await fetch('/api/todos');
+                const data = await response.json();
+                this.todos = data.todos || [];
+
+                this.$nextTick(() => {
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to fetch todos:', err);
+                this.error = 'Failed to load todos';
+            }
+        },
+
+        async createTodo() {
+            if (!this.newTodoTitle.trim()) return;
+
+            try {
+                const response = await fetch('/api/todos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: this.newTodoTitle,
+                        description: this.newTodoDescription || null,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to create todo');
+                }
+
+                // Add to list
+                this.todos.unshift(data);
+
+                // Clear form
+                this.newTodoTitle = '';
+                this.newTodoDescription = '';
+
+                this.$nextTick(() => {
+                    if (typeof lucide !== 'undefined') {
+                        lucide.createIcons();
+                    }
+                });
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to create todo:', err);
+            }
+        },
+
+        async toggleTodo(todoId, completed) {
+            try {
+                const response = await fetch(`/api/todos/${todoId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ completed }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to update todo');
+                }
+
+                // Update in list
+                const index = this.todos.findIndex(t => t.id === todoId);
+                if (index !== -1) {
+                    this.todos[index] = data;
+                }
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to toggle todo:', err);
+            }
+        },
+
+        startEdit(todo) {
+            this.editingTodoId = todo.id;
+            this.editTodoTitle = todo.title;
+            this.editTodoDescription = todo.description || '';
+        },
+
+        cancelEdit() {
+            this.editingTodoId = null;
+            this.editTodoTitle = '';
+            this.editTodoDescription = '';
+        },
+
+        async saveTodoEdit(todoId) {
+            if (!this.editTodoTitle.trim()) return;
+
+            try {
+                const response = await fetch(`/api/todos/${todoId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: this.editTodoTitle,
+                        description: this.editTodoDescription || null,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to update todo');
+                }
+
+                // Update in list
+                const index = this.todos.findIndex(t => t.id === todoId);
+                if (index !== -1) {
+                    this.todos[index] = data;
+                }
+
+                this.cancelEdit();
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to save todo:', err);
+            }
+        },
+
+        openDeleteDialog(todo) {
+            this.todoToDelete = todo;
+            this.deleteDialogOpen = true;
+        },
+
+        closeDeleteDialog() {
+            this.deleteDialogOpen = false;
+            this.todoToDelete = null;
+        },
+
+        async deleteTodo() {
+            if (!this.todoToDelete) return;
+
+            try {
+                const response = await fetch(`/api/todos/${this.todoToDelete.id}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok && response.status !== 204) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete todo');
+                }
+
+                // Remove from list
+                this.todos = this.todos.filter(t => t.id !== this.todoToDelete.id);
+
+                this.closeDeleteDialog();
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to delete todo:', err);
+            }
+        },
+
+        formatDate(dateStr) {
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diff = now - date;
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+            if (days === 0) return 'today';
+            if (days === 1) return 'yesterday';
+            if (days < 7) return `${days} days ago`;
+            if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+            if (days < 365) return `${Math.floor(days / 30)} months ago`;
+            return `${Math.floor(days / 365)} years ago`;
+        },
+    }
+}
+</script>
+{% endblock %}

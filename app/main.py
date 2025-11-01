@@ -1138,6 +1138,212 @@ async def delete_note(note_path: str):
         return jsonify({"error": "Failed to delete note"}), 500
 
 
+@app.route("/todos")
+async def todos_page():
+    """Render the todos management interface."""
+    return await render_template(
+        "todos.html",
+        static_version=config.STATIC_VERSION,
+    )
+
+
+@app.route("/api/todos", methods=["GET"])
+async def list_todos_endpoint():
+    """List all todos, optionally filtered by completion status.
+
+    Query params:
+        completed: 'true', 'false', or omitted for all
+
+    Returns JSON:
+    {
+        "todos": [
+            {
+                "id": 1,
+                "title": "...",
+                "description": "...",
+                "completed": false,
+                "created_at": "...",
+                "updated_at": "..."
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # Get optional filter
+        completed_filter = request.args.get("completed")
+        completed = None
+
+        if completed_filter == "true":
+            completed = True
+        elif completed_filter == "false":
+            completed = False
+
+        todos = db.list_todos(completed=completed)
+
+        return jsonify({"todos": todos}), 200
+
+    except Exception as e:
+        logger.error("list_todos_failed", error=str(e))
+        return jsonify({"error": "Failed to list todos"}), 500
+
+
+@app.route("/api/todos", methods=["POST"])
+async def create_todo_endpoint():
+    """Create a new todo.
+
+    Expects JSON body:
+    {
+        "title": "...",
+        "description": "..." (optional)
+    }
+
+    Returns JSON:
+    {
+        "id": 1,
+        "title": "...",
+        "description": "...",
+        "completed": false,
+        "created_at": "...",
+        "updated_at": "..."
+    }
+    """
+    try:
+        data = await request.get_json()
+
+        if not data or "title" not in data:
+            return jsonify({"error": "Missing 'title'"}), 400
+
+        title = data["title"].strip()
+        if not title:
+            return jsonify({"error": "Title cannot be empty"}), 400
+
+        description = data.get("description")
+        if description:
+            description = description.strip() or None
+        else:
+            description = None
+
+        # Create todo
+        todo_id = db.create_todo(title=title, description=description)
+
+        # Return the created todo
+        todo = db.get_todo(todo_id)
+
+        return jsonify(todo), 201
+
+    except Exception as e:
+        logger.error("create_todo_failed", error=str(e))
+        return jsonify({"error": "Failed to create todo"}), 500
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["GET"])
+async def get_todo_endpoint(todo_id: int):
+    """Get a specific todo.
+
+    Returns JSON:
+    {
+        "id": 1,
+        "title": "...",
+        "description": "...",
+        "completed": false,
+        "created_at": "...",
+        "updated_at": "..."
+    }
+    """
+    try:
+        todo = db.get_todo(todo_id)
+
+        if not todo:
+            return jsonify({"error": "Todo not found"}), 404
+
+        return jsonify(todo), 200
+
+    except Exception as e:
+        logger.error("get_todo_failed", error=str(e), todo_id=todo_id)
+        return jsonify({"error": "Failed to get todo"}), 500
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["PATCH"])
+async def update_todo_endpoint(todo_id: int):
+    """Update a todo.
+
+    Expects JSON body (all fields optional):
+    {
+        "title": "...",
+        "description": "...",
+        "completed": true/false
+    }
+
+    Returns JSON:
+    {
+        "id": 1,
+        "title": "...",
+        "description": "...",
+        "completed": false,
+        "created_at": "...",
+        "updated_at": "..."
+    }
+    """
+    try:
+        data = await request.get_json()
+
+        if not data:
+            return jsonify({"error": "Missing request body"}), 400
+
+        # Extract fields
+        title = data.get("title")
+        description = data.get("description")
+        completed = data.get("completed")
+
+        # Validate title if provided
+        if title is not None:
+            title = title.strip()
+            if not title:
+                return jsonify({"error": "Title cannot be empty"}), 400
+
+        # Update todo
+        updated = db.update_todo(
+            todo_id=todo_id,
+            title=title,
+            description=description,
+            completed=completed,
+        )
+
+        if not updated:
+            return jsonify({"error": "Todo not found"}), 404
+
+        # Return updated todo
+        todo = db.get_todo(todo_id)
+
+        return jsonify(todo), 200
+
+    except Exception as e:
+        logger.error("update_todo_failed", error=str(e), todo_id=todo_id)
+        return jsonify({"error": "Failed to update todo"}), 500
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
+async def delete_todo_endpoint(todo_id: int):
+    """Delete a todo.
+
+    Returns:
+        204 No Content if successful
+        404 Not Found if todo doesn't exist
+    """
+    try:
+        deleted = db.delete_todo(todo_id)
+
+        if not deleted:
+            return jsonify({"error": "Todo not found"}), 404
+
+        return "", 204
+
+    except Exception as e:
+        logger.error("delete_todo_failed", error=str(e), todo_id=todo_id)
+        return jsonify({"error": "Failed to delete todo"}), 500
+
+
 @app.errorhandler(404)
 async def not_found(error):
     """Handle 404 errors."""
