@@ -15,8 +15,8 @@
 ```
 ✅ Phase 0: Project Bootstrap (COMPLETED - 2025-11-01)
 ✅ Phase 1: Basic Chat UI (COMPLETED - 2025-11-01)
-📋 Phase 2: RAG Pipeline - Indexing (READY TO START)
-📋 Phase 3: RAG-Enhanced Chat (PENDING)
+✅ Phase 2: RAG Pipeline - Indexing (COMPLETED - 2025-11-01)
+📋 Phase 3: RAG-Enhanced Chat (READY TO START)
 📋 Phase 4: Sessions & Memory (PENDING)
 📋 Phase 5: Tool Calling (PENDING)
 📋 Phase 6: Polish & Production (PENDING)
@@ -28,7 +28,8 @@
 **⏱️ Time Spent:**
 - Phase 0: ~2 hours (setup, validation)
 - Phase 1: ~2 hours (implementation + Alpine.js refactor)
-- **Total:** ~4 hours to working chat UI
+- Phase 2: ~2 hours (RAG pipeline implementation)
+- **Total:** ~6 hours from zero to indexed notes
 
 **📦 What's Built:**
 - ✅ Full-stack Quart app with async Ollama client
@@ -36,6 +37,9 @@
 - ✅ Tailwind + DaisyUI styling
 - ✅ Health checks and error handling
 - ✅ Validation script for setup verification
+- ✅ Complete RAG indexing pipeline (markdown → chunks → embeddings → FAISS)
+- ✅ 11 chunks indexed from 3 sample notes
+- ✅ Runtime embedding dimension detection (1024d)
 
 ---
 
@@ -317,9 +321,29 @@
 
 ---
 
-## Phase 2: RAG Pipeline - Indexing (Day 3-4)
+## Phase 2: RAG Pipeline - Indexing ✅ COMPLETED
 
 **Goal:** Ingest notes, chunk them, embed, store in FAISS. No chat integration yet—just build the index.
+
+**Status:** ✅ Completed 2025-11-01
+
+**Deliverables:**
+- ✅ Database schema with `index_metadata` and `chunks` tables
+- ✅ Markdown parser with frontmatter support (`app/rag/md_parser.py`)
+- ✅ Character-based text chunker with overlap (`app/rag/chunker.py`)
+- ✅ FAISS vector store with runtime dimension detection (`app/rag/store_faiss.py`)
+- ✅ Complete ingest pipeline (`app/rag/ingest.py`)
+- ✅ CLI reindex script (`scripts/reindex.py`)
+- ✅ 3 sample markdown notes in `notes/` directory
+- ✅ 11 chunks indexed successfully
+
+**Key Implementation Details:**
+- Runtime embedding dimension detection (no hardcoded dimensions)
+- Character-based chunking (2400 chars, 320 overlap) avoids tokenizer dependencies
+- FAISS IndexFlatL2 for exact nearest neighbor search
+- SQLite for chunk metadata and search results
+- Progress reporting with visual progress bar
+- Error handling with partial success (continues if individual files fail)
 
 ### Tasks
 
