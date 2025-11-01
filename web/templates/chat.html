@@ -2,6 +2,53 @@
 
 {% block title %}Chat - AI Assistant{% endblock %}
 
+{% block extra_head %}
+<style>
+/* Enhanced code block styling */
+.prose pre {
+    @apply bg-base-300 rounded-lg p-4 overflow-x-auto;
+}
+
+.prose code {
+    @apply bg-base-300 px-1.5 py-0.5 rounded text-sm;
+}
+
+.prose pre code {
+    @apply bg-transparent p-0;
+}
+
+/* Table styling */
+.prose table {
+    @apply w-full border-collapse;
+}
+
+.prose th,
+.prose td {
+    @apply border border-base-300 px-4 py-2;
+}
+
+.prose th {
+    @apply bg-base-200 font-semibold;
+}
+
+/* Blockquote styling */
+.prose blockquote {
+    @apply border-l-4 border-primary pl-4 italic;
+}
+
+/* Link styling */
+.prose a {
+    @apply text-primary hover:underline;
+}
+
+/* List styling */
+.prose ul,
+.prose ol {
+    @apply pl-6;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="flex h-screen bg-base-100" x-data="chatApp()">
     <!-- Sidebar -->
@@ -152,8 +199,8 @@
 
                         <!-- Content -->
                         <div class="flex-1 min-w-0 pt-1">
-                            <div class="prose prose-sm max-w-none">
-                                <div class="whitespace-pre-wrap" x-text="msg.content"></div>
+                            <div class="prose prose-sm max-w-none dark:prose-invert">
+                                <div x-html="renderMarkdown(msg.content)"></div>
                             </div>
 
                             <!-- Tool Calls -->
@@ -267,6 +314,14 @@
 
 {% block extra_scripts %}
 <script>
+// Configure marked.js globally
+marked.setOptions({
+    breaks: true,      // Convert \n to <br>
+    gfm: true,         // GitHub Flavored Markdown
+    headerIds: true,   // Add IDs to headers
+    mangle: false,     // Don't escape autolinked email addresses
+});
+
 function chatApp() {
     return {
         messages: [],
@@ -283,6 +338,35 @@ function chatApp() {
             this.fetchSessions();
             this.fetchModels();
             this.$refs.input.focus();
+        },
+
+        renderMarkdown(content) {
+            if (!content) return '';
+
+            try {
+                // Parse markdown to HTML
+                const rawHtml = marked.parse(content);
+
+                // Sanitize HTML to prevent XSS attacks
+                const cleanHtml = DOMPurify.sanitize(rawHtml, {
+                    ALLOWED_TAGS: [
+                        'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+                        'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                        'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+                        'span', 'div', 'img', 'del', 'input'
+                    ],
+                    ALLOWED_ATTR: [
+                        'href', 'target', 'rel', 'class', 'src', 'alt', 'title',
+                        'type', 'checked', 'disabled'
+                    ]
+                });
+
+                return cleanHtml;
+            } catch (err) {
+                console.error('Markdown rendering error:', err);
+                // Fallback to plain text if markdown parsing fails
+                return DOMPurify.sanitize(content);
+            }
         },
 
         async fetchModels() {
