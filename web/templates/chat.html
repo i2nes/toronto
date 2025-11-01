@@ -6,45 +6,70 @@
 <style>
 /* Enhanced code block styling */
 .prose pre {
-    @apply bg-base-300 rounded-lg p-4 overflow-x-auto;
+    background-color: oklch(var(--b3));
+    border-radius: 0.5rem;
+    padding: 1rem;
+    overflow-x: auto;
 }
 
 .prose code {
-    @apply bg-base-300 px-1.5 py-0.5 rounded text-sm;
+    background-color: oklch(var(--b3));
+    padding-left: 0.375rem;
+    padding-right: 0.375rem;
+    padding-top: 0.125rem;
+    padding-bottom: 0.125rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
 }
 
 .prose pre code {
-    @apply bg-transparent p-0;
+    background-color: transparent;
+    padding: 0;
 }
 
 /* Table styling */
 .prose table {
-    @apply w-full border-collapse;
+    width: 100%;
+    border-collapse: collapse;
 }
 
 .prose th,
 .prose td {
-    @apply border border-base-300 px-4 py-2;
+    border-width: 1px;
+    border-color: oklch(var(--b3));
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
 }
 
 .prose th {
-    @apply bg-base-200 font-semibold;
+    background-color: oklch(var(--b2));
+    font-weight: 600;
 }
 
 /* Blockquote styling */
 .prose blockquote {
-    @apply border-l-4 border-primary pl-4 italic;
+    border-left-width: 4px;
+    border-color: oklch(var(--p));
+    padding-left: 1rem;
+    font-style: italic;
 }
 
 /* Link styling */
 .prose a {
-    @apply text-primary hover:underline;
+    color: oklch(var(--p));
+}
+
+.prose a:hover {
+    text-decoration: underline;
 }
 
 /* List styling */
 .prose ul,
 .prose ol {
-    @apply pl-6;
+    padding-left: 1.5rem;
 }
 </style>
 {% endblock %}
@@ -90,8 +115,8 @@
     <!-- Main Content Area -->
     <div class="flex flex-col flex-1">
     <!-- Header -->
-    <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300 min-h-[4rem]">
-        <div class="navbar max-w-4xl mx-auto px-4 min-h-[4rem]">
+    <header class="sticky top-0 z-10 bg-base-100 border-b border-base-300 min-h-16">
+        <div class="navbar max-w-4xl mx-auto px-4 min-h-16">
             <div class="flex-1">
                 <div class="flex items-center gap-2">
                     <i data-lucide="bot" class="w-6 h-6"></i>
@@ -188,7 +213,7 @@
                 <div class="max-w-3xl mx-auto px-4 py-6">
                     <div class="flex gap-4">
                         <!-- Avatar -->
-                        <div class="flex-shrink-0">
+                        <div class="shrink-0">
                             <div class="w-8 h-8 rounded-full flex items-center justify-center bg-base-200">
                                 <i :data-lucide="msg.role === 'user' ? 'user' : (msg.role === 'error' ? 'alert-triangle' : 'bot')"
                                    class="w-5 h-5"
